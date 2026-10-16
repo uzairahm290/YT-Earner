@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated per-video work. Keep the folder, not the contents.
+episodes/*
+!episodes/.gitkeep
+
+# Big media, never in git
+*.mp4
+*.wav
+*.mp3

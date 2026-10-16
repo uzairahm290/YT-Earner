@@ -1,0 +1,98 @@
+# ─────────────────────────────────────────────────────────────
+#  Channel config. Edit this file, not the code.
+# ─────────────────────────────────────────────────────────────
+
+channel:
+  name: "Your Channel Name"
+  niche: "tech documentaries"
+  audience: "US"
+  # How the narrator should sound on paper. Fed straight into the script prompt.
+  voice_style: >
+    Calm, curious, slightly dry American documentary narrator.
+    Short sentences when tension rises. Never hypes, never sells.
+
+# LLM used for research + scripts. Any OpenAI-compatible endpoint works.
+# Free options (limits change, check the provider's site):
+#   gemini -> Google AI Studio free tier
+#   groq   -> Groq free tier
+#   local  -> an OpenAI-compatible server you run (e.g. on Kaggle)
+llm:
+  provider: gemini
+  providers:
+    gemini:
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      model: "gemini-2.5-flash"      # swap if Google renames/retires it
+      api_key_env: GEMINI_API_KEY
+      max_input_chars: 120000
+    groq:
+      base_url: "https://api.groq.com/openai/v1"
+      model: "llama-3.3-70b-versatile"
+      api_key_env: GROQ_API_KEY
+      max_input_chars: 40000         # smaller context, so research gets trimmed
+    local:
+      base_url: "http://localhost:8000/v1"
+      model: "qwen2.5-7b-instruct"
+      api_key_env: LOCAL_LLM_KEY
+      max_input_chars: 30000
+  temperature: 0.7
+  timeout_seconds: 180
+
+# Where topic ideas come from. US tech outlets only.
+topics:
+  rss_feeds:
+    - https://www.theverge.com/rss/index.xml
+    - https://techcrunch.com/feed/
+    - https://feeds.arstechnica.com/arstechnica/index
+    - https://www.wired.com/feed/rss
+    - https://www.cnbc.com/id/19854910/device/rss/rss.html   # CNBC Technology
+  # Wikipedia articles getting a spike in US/English traffic often signal a story people want.
+  wikipedia_trending: true
+  # Only keep Wikipedia trends whose title/description hits one of these.
+  trend_keywords:
+    - company
+    - technology
+    - software
+    - computer
+    - internet
+    - startup
+    - semiconductor
+    - smartphone
+    - artificial intelligence
+    - founder
+    - businessman
+    - entrepreneur
+    - aircraft
+    - spacecraft
+    - cryptocurrency
+    - video game
+  max_candidates: 25
+
+# Documentary shape
+script:
+  long_minutes: 14          # target length for long-form videos
+  words_per_minute: 140     # documentary pace is slower than normal speech
+  min_chapters: 4
+  max_chapters: 7
+  shorts_per_video: 6       # Shorts the script should flag for the cutter
+
+# Phrases that scream "AI wrote this". Script lint fails if any show up.
+banned_phrases:
+  - "in today's fast-paced world"
+  - "let's dive in"
+  - "dive into"
+  - "delve"
+  - "buckle up"
+  - "in conclusion"
+  - "it's important to note"
+  - "game-changer"
+  - "revolutionize"
+  - "unleash"
+  - "tapestry"
+  - "testament to"
+  - "in the ever-evolving"
+  - "landscape of"
+  - "a rollercoaster"
+  - "stay tuned"
+  - "smash that like button"
+  - "without further ado"
+  - "little did they know"
