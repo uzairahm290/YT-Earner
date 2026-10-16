@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "project": "en.wikipedia",
+      "access": "all-access",
+      "articles": [
+        {"article": "Main_Page", "views": 5000000, "rank": 1},
+        {"article": "Special:Search", "views": 900000, "rank": 2},
+        {"article": "Nokia", "views": 210000, "rank": 14},
+        {"article": "Taylor_Swift", "views": 180000, "rank": 18},
+        {"article": "Deaths_in_2026", "views": 150000, "rank": 21},
+        {"article": "Theranos", "views": 95000, "rank": 40}
+      ]
+    }
+  ]
+}

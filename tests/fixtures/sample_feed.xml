@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Sample Tech Feed (fixture)</title>
+    <link>https://example.com</link>
+    <description>Offline test feed</description>
+    <item>
+      <title>Chipmaker shares slide after export rule update</title>
+      <link>https://example.com/chips</link>
+      <description>&lt;p&gt;Semiconductor stocks fell after a revised export rule took effect.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Inside the startup that tried to replace the smartphone</title>
+      <link>https://example.com/startup</link>
+      <description>A look at a hardware startup that raised big and shipped little.</description>
+    </item>
+    <item>
+      <title>Inside the startup that tried to replace the smartphone!</title>
+      <link>https://example.com/startup-dupe</link>
+      <description>Duplicate headline from another outlet, should be dropped.</description>
+    </item>
+  </channel>
+</rss>
