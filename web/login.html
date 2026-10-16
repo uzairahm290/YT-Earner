@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Production Desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Courier+Prime&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .signin { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+    .signin form { width: min(380px, 100%); }
+    .signin h1 { margin-bottom: 8px; }
+    .signin .lede { margin-bottom: 28px; }
+    .signin .err { color: var(--grease); font-size: 14px; min-height: 1.5em; margin: -6px 0 12px; }
+    .slate { font-family: var(--type); font-size: 13px; color: var(--graphite); border-top: 2px solid var(--ink); padding-top: 10px; margin-bottom: 28px; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <main class="signin">
+    <form id="f">
+      <div class="slate"><span>Production Desk</span><span id="clock"></span></div>
+      <h1>Sign in</h1>
+      <p class="lede">Your stories, fact sheets and scripts are behind this.</p>
+      <label class="field"><span>Password</span>
+        <input type="password" id="pw" autocomplete="current-password" required autofocus></label>
+      <p class="err" id="err" role="alert"></p>
+      <button class="btn btn-primary btn-block" type="submit" id="go">Sign in</button>
+    </form>
+  </main>
+  <script>
+    const tick = () => document.getElementById("clock").textContent =
+      new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    tick(); setInterval(tick, 1000);
+
+    document.getElementById("f").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const go = document.getElementById("go"), err = document.getElementById("err");
+      go.disabled = true; err.textContent = "";
+      try {
+        const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: document.getElementById("pw").value }) });
+        if (res.ok) { location.href = "/"; return; }
+        err.textContent = (await res.json()).detail || "Couldn't sign in.";
+      } catch { err.textContent = "Can't reach the server. It may be waking up; try again in a few seconds."; }
+      go.disabled = false;
+    });
+  </script>
+</body>
+</html>

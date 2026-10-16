@@ -5,28 +5,30 @@
   python app.py --demo     # offline fixtures + canned LLM replies, no keys needed
 
 Then open http://localhost:8000
+
+Deployed (Render): DESK_PASSWORD turns on the login, DATABASE_URL points storage at Supabase.
 """
 from __future__ import annotations
 
 import argparse
-import json
+import hashlib
+import hmac
 import os
-import shutil
 import threading
 import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
 from pipeline import research, script, topics
-from pipeline.config import EPISODES_DIR, ROOT, env, load_config
+from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
+from pipeline.store import get_store
 
 DEMO = os.getenv("DOCU_MOCK_LLM") == "1"
 
@@ -45,6 +47,80 @@ STAGES = [
 STATUS_ORDER = ["new"] + [s["status"] for s in STAGES]
 
 app = FastAPI(title="docu-pipeline")
+
+
+# ──────────────────────────── login ────────────────────────────
+# One user, one password. The session cookie is an HMAC keyed by the password itself,
+# so changing DESK_PASSWORD signs every device out.
+
+PASSWORD = env("DESK_PASSWORD")
+COOKIE = "desk_session"
+OPEN_PATHS = ("/login", "/api/login", "/healthz", "/static/")
+
+if os.getenv("RENDER") and not PASSWORD:
+    raise SystemExit("DESK_PASSWORD is not set. Refusing to run on a public URL without a login.")
+
+
+def _session_token() -> str:
+    return hmac.new(PASSWORD.encode(), b"production-desk-session-v1", hashlib.sha256).hexdigest()
+
+
+def _signed_in(request: Request) -> bool:
+    return not PASSWORD or hmac.compare_digest(request.cookies.get(COOKIE, ""), _session_token())
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if _signed_in(request) or path.startswith(OPEN_PATHS):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Signed out. Reload to sign in again."}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+_failed: dict[str, list[float]] = {}
+
+
+class LoginBody(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(body: LoginBody, request: Request):
+    if not PASSWORD:
+        return {"ok": True}
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "?").split(",")[0]
+    recent = [t for t in _failed.get(ip, []) if t > time.time() - 900]
+    if len(recent) >= 8:
+        raise HTTPException(429, "Too many wrong passwords. Try again in 15 minutes.")
+    if not hmac.compare_digest(body.password.encode(), PASSWORD.encode()):
+        _failed[ip] = recent + [time.time()]
+        time.sleep(1)  # slows guessing
+        raise HTTPException(401, "That password isn't right.")
+    _failed.pop(ip, None)
+    https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(COOKIE, _session_token(), max_age=60 * 60 * 24 * 30, httponly=True,
+                    secure=https, samesite="lax")
+    return resp
+
+
+@app.post("/api/logout")
+def logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(COOKIE)
+    return resp
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(ROOT / "web" / "login.html")
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 
 # ──────────────────────────── background jobs ────────────────────────────
@@ -98,6 +174,8 @@ def status():
     prov = llm["providers"][llm["provider"]]
     return {
         "demo": DEMO,
+        "auth": bool(PASSWORD),
+        "storage": get_store().kind,
         "channel": cfg["channel"]["name"],
         "provider": llm["provider"],
         "model": prov["model"],
@@ -112,33 +190,30 @@ def status():
 
 # ──────────────────────────── topics ────────────────────────────
 
-TOPICS_FILE = EPISODES_DIR / "_topics-latest.json"
-
-
 @app.get("/api/topics")
 def get_topics():
-    if not TOPICS_FILE.exists():
-        return {"fetched": None, "items": []}
-    return json.loads(TOPICS_FILE.read_text())
+    return topics.load_latest() or {"fetched": None, "items": []}
 
 
 @app.post("/api/topics/refresh")
 def refresh_topics():
     def work():
         items = topics.find_topics(offline=DEMO)
-        EPISODES_DIR.mkdir(exist_ok=True)
-        data = {"fetched": date.today().isoformat(), "items": items}
-        TOPICS_FILE.write_text(json.dumps(data, indent=2))
+        topics.save_latest(items)
         return {"count": len(items)}
     return start_job("topics", "Finding topics", work)
 
 
 # ──────────────────────────── episodes ────────────────────────────
 
-def summarize(ep: Episode) -> dict:
-    meta = ep.read("meta.json") or {}
-    lint = ep.read("lint.json")
-    fs = ep.read("factsheet.json") or {}
+SUMMARY_FILES = ["meta.json", "lint.json", "factsheet.json"]
+
+
+def summarize(ep: Episode, files: dict | None = None) -> dict:
+    files = files if files is not None else {n: ep.read(n) for n in SUMMARY_FILES}
+    meta = files.get("meta.json") or {}
+    lint = files.get("lint.json")
+    fs = files.get("factsheet.json") or {}
     verify = fs.get("needs_verification", [])
     return {
         "slug": ep.slug,
@@ -154,10 +229,7 @@ def summarize(ep: Episode) -> dict:
 
 @app.get("/api/episodes")
 def list_episodes():
-    if not EPISODES_DIR.exists():
-        return []
-    eps = [Episode(p.name) for p in EPISODES_DIR.iterdir() if p.is_dir()]
-    out = [summarize(e) for e in eps]
+    out = [summarize(Episode(slug), files) for slug, files in Episode.read_many(SUMMARY_FILES).items()]
     return sorted(out, key=lambda e: e["created_at"] or "", reverse=True)
 
 
@@ -292,7 +364,7 @@ def unapprove(slug: str):
 @app.delete("/api/episodes/{slug}")
 def delete_episode(slug: str):
     ep = _load(slug)
-    shutil.rmtree(ep.dir)
+    ep.delete()
     return {"deleted": slug}
 
 

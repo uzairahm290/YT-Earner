@@ -49,6 +49,7 @@ async function api(path, opts = {}) {
   });
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
+  if (res.status === 401 && path !== "/api/login") { location.href = "/login"; throw new Error("Signed out"); }
   if (!res.ok) throw new Error(data?.detail || `Request failed (${res.status})`);
   return data;
 }
@@ -112,6 +113,7 @@ function renderRail() {
     (a.dataset.nav === "desk" && route === "") || (a.dataset.nav === "topics" && route === "topics")));
 
   const s = state.status;
+  $("#signOut").hidden = !s?.auth;
   const note = $("#setupNote");
   if (s?.demo) {
     note.hidden = false;
@@ -909,6 +911,13 @@ $("#newForm").addEventListener("submit", async (e) => {
     state.ep = null;
     location.hash = `#/e/${res.slug}/facts`;
   } catch (err) { toast(err.message, true); }
+});
+
+$("#signOut").addEventListener("click", async () => {
+  if (state.dirty && !confirm("You have unsaved script edits. Sign out anyway?")) return;
+  state.dirty = false;
+  await api("/api/logout", { method: "POST" });
+  location.href = "/login";
 });
 
 $("#railToggle").addEventListener("click", () => {
