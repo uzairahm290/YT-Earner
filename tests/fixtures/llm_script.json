@@ -1,0 +1,48 @@
+{
+  "title_options": [
+    "The Memo That Admitted Nokia Was on Fire",
+    "How Nokia Lost the Phone It Invented",
+    "From Paper Mill to Phone King to Footnote",
+    "Nokia Had 40% of the Market. Then 2007 Happened."
+  ],
+  "thumbnail_text_options": ["THE PLATFORM BURNED", "40% TO ZERO", "ONE MEMO"],
+  "description": "In February 2011, the CEO of the world's biggest phone maker sent his staff a memo comparing the company to a burning oil platform.\n\nThis is the story of how Nokia went from a Finnish paper mill to owning the phone market, and how it lost all of it in a few years.",
+  "tags": ["Nokia", "Nokia documentary", "Stephen Elop", "burning platform memo", "Windows Phone", "Symbian", "iPhone 2007", "tech history", "Microsoft Nokia deal"],
+  "chapters": [
+    {
+      "title": "Cold open",
+      "beats": [
+        {"narration": "February 2011. A memo lands in the inboxes of Nokia employees around the world.", "visual": {"type": "title_card", "query": "February 2011"}, "on_screen_text": null, "pause_after": 0.5},
+        {"narration": "It's from the new CEO. And it says the company is standing on a burning platform.", "visual": {"type": "archive_photo", "query": "Stephen Elop 2011"}, "on_screen_text": "Stephen Elop — CEO, Nokia", "pause_after": 1.2},
+        {"narration": "Nokia was still the biggest phone maker on Earth. So how did it get here?", "visual": {"type": "broll", "query": "office building at night Finland"}, "on_screen_text": null, "pause_after": 0.8}
+      ]
+    },
+    {
+      "title": "A Mill by the River",
+      "beats": [
+        {"narration": "The story starts in 1865, with a mining engineer named Fredrik Idestam and a wood pulp mill in southern Finland.", "visual": {"type": "archive_photo", "query": "Fredrik Idestam"}, "on_screen_text": "Fredrik Idestam — founder", "pause_after": 0.3},
+        {"narration": "The company took its name from the river nearby. Nokia.", "visual": {"type": "map", "query": "Nokia, Finland"}, "on_screen_text": null, "pause_after": 0.8}
+      ]
+    },
+    {
+      "title": "Owning the Pocket",
+      "beats": [
+        {"narration": "By the late 2000s, roughly 40 percent of the phones sold worldwide carried the Nokia name.", "visual": {"type": "chart", "query": "Nokia global market share, about 40% late 2000s"}, "on_screen_text": null, "pause_after": 0.3},
+        {"narration": "Then, in 2007, Apple walked on stage with a phone that was almost all screen.", "visual": {"type": "document", "query": "Apple iPhone announcement headline 2007"}, "on_screen_text": "2007", "pause_after": 1.0},
+        {"narration": "Nokia's software, Symbian, was built for buttons. The world was moving to glass.", "visual": {"type": "broll", "query": "close up of old keypad phone"}, "on_screen_text": null, "pause_after": 0.3}
+      ]
+    },
+    {
+      "title": "The Last Bet",
+      "beats": [
+        {"narration": "Days after the memo, Nokia announced it would build its smartphones on Microsoft's Windows Phone.", "visual": {"type": "document", "query": "Nokia Microsoft Windows Phone partnership announcement February 2011"}, "on_screen_text": null, "pause_after": 0.3},
+        {"narration": "In September 2013, Microsoft announced it would buy the phone business outright. The deal closed in April 2014.", "visual": {"type": "document", "query": "Microsoft press release September 2013 Nokia acquisition"}, "on_screen_text": "September 2013", "pause_after": 1.2},
+        {"narration": "Nokia didn't vanish. It became something quieter: a company that builds the networks your phone runs on.", "visual": {"type": "broll", "query": "cell tower at dusk"}, "on_screen_text": null, "pause_after": 0.5}
+      ]
+    }
+  ],
+  "shorts": [
+    {"chapter": 0, "beats": [1, 3], "hook": "Imagine getting this email from your CEO.", "why": "Self-contained tension with a question at the end"},
+    {"chapter": 2, "beats": [1, 3], "hook": "Nokia owned 40% of the market. Then one phone showed up.", "why": "Clear before/after in under a minute"}
+  ]
+}
