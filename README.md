@@ -27,6 +27,8 @@ Everything runs from the Production Desk:
 
 The CLI below does the same things if you'd rather script it.
 
+To put it online behind a password (Render + Supabase, free), see **[DEPLOY.md](DEPLOY.md)**.
+
 ## What works today
 
 | Stage | Command | Output (in `episodes/<slug>/`) |
@@ -67,8 +69,10 @@ pipeline/
   research.py        Wikipedia → sourced fact sheet
   script.py          fact sheet → beats + visuals + Shorts picks, with lint
   llm.py             any OpenAI-compatible endpoint (Gemini / Groq / local)
-  episode.py         per-video folder + status
-app.py               dashboard server (FastAPI)
+  episode.py         per-video files + status
+  store.py           where files live: episodes/ folder locally, Supabase when DATABASE_URL is set
+app.py               dashboard server (FastAPI) + login
+render.yaml          Render blueprint
 web/                 dashboard frontend (plain HTML/CSS/JS, no build step)
 cli.py
 tests/               offline tests + fixtures (DOCU_MOCK_LLM=1 replays canned LLM replies)
