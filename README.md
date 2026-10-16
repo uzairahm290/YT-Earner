@@ -9,6 +9,24 @@ topics ─► research ─► script ─► voice ─► visuals ─► render �
   ✅         ✅          ✅       next     next      next      next      next
 ```
 
+## The dashboard
+
+```bash
+python app.py          # http://localhost:8000
+python app.py --demo   # sample data, no keys needed, good for a first look
+```
+
+Everything runs from the Production Desk:
+
+- **Desk**: every story sorted by what it needs from you next (check facts, write script, approve).
+- **Topic ideas**: today's shortlist, one click to start research.
+- **Fact sheet**: timeline, people, numbers with their sources, a checklist of claims to confirm, and a place to correct anything wrong.
+- **Script**: a two-column picture/narration paper edit. Running timecodes, shot type and search for each beat, lower thirds, pauses. AI phrases get marked in red as you type; numbers that aren't in the fact sheet get marked on save. Approve is locked until it's clean.
+- **Shorts**: phone-shaped previews of each Short with its hook line.
+- **Title and thumbnail**: pick or write the title, thumbnail text and description.
+
+The CLI below does the same things if you'd rather script it.
+
 ## What works today
 
 | Stage | Command | Output (in `episodes/<slug>/`) |
@@ -50,6 +68,8 @@ pipeline/
   script.py          fact sheet → beats + visuals + Shorts picks, with lint
   llm.py             any OpenAI-compatible endpoint (Gemini / Groq / local)
   episode.py         per-video folder + status
+app.py               dashboard server (FastAPI)
+web/                 dashboard frontend (plain HTML/CSS/JS, no build step)
 cli.py
 tests/               offline tests + fixtures (DOCU_MOCK_LLM=1 replays canned LLM replies)
 .github/workflows/   daily topic shortlist + tests

@@ -41,21 +41,21 @@ WIKI_USER_AGENT=DocuPipeline/0.1 (contact: your-email@gmail.com)
 
 ```bash
 python -m unittest discover tests        # offline, should print OK
-python cli.py topics                     # real feeds
-python cli.py research "Nokia" --extra "Stephen Elop" "Symbian"
+python app.py --demo                     # click around with sample data at http://localhost:8000
 ```
 
-Open `episodes/nokia/factsheet.md`. Go through the **⚠️ Verify** list against the citation links at the
-bottom. Fix or delete anything wrong directly in `factsheet.json`. Then:
+Then stop it and run it for real:
 
 ```bash
-python cli.py script nokia \
-  --angle "The memo that admitted an empire was on fire" \
-  --notes "I grew up with a 3310. Make the point that Nokia didn't lose to a better phone, it lost to a better ecosystem."
+python app.py
 ```
 
-Read `episodes/nokia/script.md` out loud. Anything that sounds like a robot, rewrite it in `script.json`.
-`--notes` is where your own opinion goes in: that's the part YouTube can't call mass-produced.
+1. **New story** → "Nokia", extra articles "Stephen Elop" and "Symbian" → Start research.
+2. On the fact sheet, confirm each flagged claim against the sources and tick it off. If something's wrong, open **Correct the fact sheet** and fix it there.
+3. Pick a story angle, go to **Script**, add your own take in the notes box, write the script.
+4. Read it out loud. Edit beats in place, fix anything marked in red, save, approve.
+
+The notes box is where your own opinion goes in: that's the part YouTube can't call mass-produced.
 
 ### 5. Push to GitHub
 
@@ -74,7 +74,6 @@ the run's **Artifacts**, or hit **Run workflow** to get one on demand.
 | **Channel** | Create a YouTube channel (a Brand Account is nicer, so you can add managers later). Country: your real one. Content language: English. | US viewers pay US ad rates no matter where the channel is. |
 | **Images/B-roll** | Sign up at **pexels.com/api** and **pixabay.com/api/docs** → put keys in `.env` | Free, commercial use OK. Wikimedia Commons needs no key. |
 | **GPU** | **kaggle.com** → Settings → **phone verification** (needed for GPU + internet in notebooks) → Create New Token → saves `kaggle.json` | Used for voice and, optionally, a local LLM. |
-| **Approval bot** | In Telegram, message **@BotFather** → `/newbot` → copy token into `TELEGRAM_BOT_TOKEN`. Message your bot once, then get your chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates` | The bot will send you scripts and previews to approve. |
 | **Upload** | **console.cloud.google.com** → new project → enable **YouTube Data API v3** → OAuth consent screen (External) → OAuth client (Desktop app) | Until Google audits the project, API uploads stay **private**. Fine: you publish manually after review. Apply for the audit once you have a few videos. |
 | **Music** | Nothing to sign up for. Use the **YouTube Audio Library** in YouTube Studio | Safe to monetize. |
 
@@ -82,10 +81,10 @@ the run's **Artifacts**, or hit **Run workflow** to get one on demand.
 
 ## Your weekly routine (once everything's built)
 
-1. Morning: glance at the topic shortlist, pick 1–2 stories with real drama.
-2. `research` → spend ~30 min on the fact sheet's ⚠️ list. Accuracy is your brand and your legal cover.
-3. `script` with your angle + notes → edit for 20–30 min.
-4. The rest of the pipeline renders the long video and its Shorts → you watch the cut, approve in Telegram.
+1. Open the dashboard, glance at Topic ideas, start 1–2 stories with real drama.
+2. Spend ~30 min on each fact sheet's checklist. Accuracy is your brand and your legal cover.
+3. Write the script with your angle and notes, edit for 20–30 min, approve.
+4. The rest of the pipeline renders the long video and its Shorts; you watch the cut and approve it on the dashboard.
 5. It uploads privately; you schedule for **2–6 PM Eastern** (midnight–4 AM in Pakistan).
 
 ---
@@ -98,7 +97,7 @@ the run's **Artifacts**, or hit **Run workflow** to get one on demand.
 | 5 | **Visuals** | Per-beat fetch: Wikimedia Commons for `archive_photo`, Pexels/Pixabay for `broll`, Python-rendered `chart`/`map`/`title_card`/`document` cards. License + credit saved per asset |
 | 6 | **Render** | MoviePy/FFmpeg: Ken Burns on stills, cuts timed to the voice, lower-thirds, captions, grade + grain, music ducked under narration |
 | 7 | **Shorts** | Re-cut the flagged beat ranges vertical 9:16, new hook line, bigger captions |
-| 8 | **Approval** | Telegram bot sends script + preview, you reply approve/edit |
+| 8 | **Approval** | Final-cut review on the dashboard: watch it, approve or send back |
 | 9 | **Upload** | YouTube Data API: private upload with title/description/tags/chapters, then scheduled publish |
 | 10 | **Orchestration** | GitHub Actions ties it together; Kaggle only gets called if a stage needs a GPU |
 
