@@ -1,0 +1,26 @@
+name: Daily topic shortlist
+
+on:
+  schedule:
+    - cron: "7 3 * * *"   # 03:07 UTC = 8:07 AM Pakistan time
+  workflow_dispatch:       # "Run workflow" button in the Actions tab
+
+jobs:
+  topics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Find topics
+        env:
+          WIKI_USER_AGENT: ${{ secrets.WIKI_USER_AGENT }}
+        run: python cli.py topics
+      - uses: actions/upload-artifact@v4
+        with:
+          name: topics-${{ github.run_id }}
+          path: episodes/_topics-*.md
+          retention-days: 14
