@@ -1,0 +1,32 @@
+{
+  "summary": "Nokia started as a Finnish wood pulp mill in 1865 and grew into the world's largest phone maker. The arrival of the iPhone in 2007 and then Android exposed its aging Symbian software. A 2011 bet on Microsoft's Windows Phone failed to turn things around, and Microsoft bought the phone business in 2013.",
+  "story_angles": [
+    "The memo that admitted an empire was on fire",
+    "From paper mill to phone giant and back to the shadows",
+    "How the world's biggest phone maker lost the smartphone war"
+  ],
+  "timeline": [
+    {"date": "1865", "event": "Fredrik Idestam opens a wood pulp mill in southern Finland", "source": "S1"},
+    {"date": "1990s-2000s", "event": "Nokia becomes the world's largest mobile phone maker", "source": "S1"},
+    {"date": "2007", "event": "Apple introduces the iPhone", "source": "S1"},
+    {"date": "2010", "event": "Stephen Elop becomes CEO", "source": "S1"},
+    {"date": "February 2011", "event": "Elop's 'burning platform' memo; days later Nokia picks Windows Phone", "source": "S1"},
+    {"date": "September 2013", "event": "Microsoft announces it will buy Nokia's devices and services business", "source": "S1"},
+    {"date": "April 2014", "event": "The Microsoft deal closes", "source": "S1"},
+    {"date": "2016", "event": "Nokia completes its acquisition of Alcatel-Lucent", "source": "S1"}
+  ],
+  "people": [
+    {"name": "Fredrik Idestam", "role": "Mining engineer who founded the original mill"},
+    {"name": "Stephen Elop", "role": "Former Microsoft executive, Nokia CEO from 2010"}
+  ],
+  "key_numbers": [
+    {"figure": "roughly 40 percent", "context": "Nokia's share of the global handset market at its late-2000s peak", "source": "S1"}
+  ],
+  "turning_points": [
+    "The iPhone launch in 2007 resetting what a phone was",
+    "The February 2011 memo and the Windows Phone bet"
+  ],
+  "needs_verification": [
+    "Peak market share is given as 'roughly 40 percent' — confirm exact figure and year from an analyst source"
+  ]
+}
