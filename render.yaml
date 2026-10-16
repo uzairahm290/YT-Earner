@@ -1,0 +1,23 @@
+# Render Blueprint: New → Blueprint → pick this repo. Render reads this file and builds the service.
+services:
+  - type: web
+    name: production-desk
+    runtime: python
+    plan: free
+    region: singapore              # closest Render region to Pakistan; put Supabase in Singapore too
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    autoDeploy: true               # every push to main redeploys
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      # sync: false = Render asks you for the value when you create the Blueprint. Never commit these.
+      - key: DESK_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WIKI_USER_AGENT
+        sync: false

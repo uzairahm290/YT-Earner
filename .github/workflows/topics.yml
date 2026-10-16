@@ -18,6 +18,9 @@ jobs:
       - name: Find topics
         env:
           WIKI_USER_AGENT: ${{ secrets.WIKI_USER_AGENT }}
+          # Writes the shortlist to Supabase so it shows up in the dashboard's Topic ideas.
+          # Also counts as activity, which keeps a free Supabase project from pausing.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python cli.py topics
       - uses: actions/upload-artifact@v4
         with:
