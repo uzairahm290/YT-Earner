@@ -1,13 +1,13 @@
-"""Every video lives in its own folder under episodes/<slug>/ so each stage can pick up where the last stopped."""
+"""Every video is an episode: a named set of files (meta.json, factsheet.json, script.json, ...)
+kept in the store, so each stage can pick up where the last stopped."""
 from __future__ import annotations
 
 import json
 import re
 import unicodedata
 from datetime import datetime, timezone
-from pathlib import Path
 
-from .config import EPISODES_DIR
+from .store import get_store
 
 
 def slugify(text: str) -> str:
@@ -16,15 +16,20 @@ def slugify(text: str) -> str:
     return text[:60] or "untitled"
 
 
+def _decode(name: str, text: str | None):
+    if text is None:
+        return None
+    return json.loads(text) if name.endswith(".json") else text
+
+
 class Episode:
     def __init__(self, slug: str):
         self.slug = slug
-        self.dir = EPISODES_DIR / slug
+        self.store = get_store()
 
     @classmethod
     def create(cls, topic: str) -> "Episode":
         ep = cls(slugify(topic))
-        ep.dir.mkdir(parents=True, exist_ok=True)
         meta = ep.read("meta.json") or {}
         meta.setdefault("topic", topic)
         meta.setdefault("created_at", datetime.now(timezone.utc).isoformat())
@@ -35,29 +40,29 @@ class Episode:
     @classmethod
     def load(cls, slug: str) -> "Episode":
         ep = cls(slug)
-        if not ep.dir.exists():
-            raise FileNotFoundError(f"No episode '{slug}' in {EPISODES_DIR}")
+        if not ep.store.exists(slug):
+            raise FileNotFoundError(f"No episode '{slug}'")
         return ep
 
-    def path(self, name: str) -> Path:
-        return self.dir / name
+    @staticmethod
+    def all_slugs() -> list[str]:
+        return get_store().slugs()
+
+    @staticmethod
+    def read_many(names: list[str]) -> dict[str, dict]:
+        """{slug: {name: parsed}} for every episode, in one go."""
+        raw = get_store().read_many(names)
+        return {slug: {n: _decode(n, t) for n, t in files.items()} for slug, files in raw.items()}
 
     def read(self, name: str):
-        p = self.path(name)
-        if not p.exists():
-            return None
-        if p.suffix == ".json":
-            return json.loads(p.read_text(encoding="utf-8"))
-        return p.read_text(encoding="utf-8")
+        return _decode(name, self.store.read(self.slug, name))
 
-    def write(self, name: str, data) -> Path:
-        p = self.path(name)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(data, (dict, list)):
-            p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        else:
-            p.write_text(data, encoding="utf-8")
-        return p
+    def write(self, name: str, data) -> None:
+        text = json.dumps(data, indent=2, ensure_ascii=False) if isinstance(data, (dict, list)) else data
+        self.store.write(self.slug, name, text)
+
+    def delete(self) -> None:
+        self.store.delete(self.slug)
 
     def set_status(self, status: str) -> None:
         meta = self.read("meta.json") or {}

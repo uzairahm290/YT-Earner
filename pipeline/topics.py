@@ -8,6 +8,7 @@ The output is a shortlist for YOU to pick from. Picking the topic is the human s
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,7 +49,6 @@ def fetch_rss(feeds: list[str], offline: bool = False) -> list[dict]:
 
 def fetch_wikipedia_trending(keywords: list[str], offline: bool = False) -> list[dict]:
     if offline:
-        import json
         top = json.loads((FIXTURES / "sample_pageviews.json").read_text())["items"][0]["articles"]
         descriptions = json.loads((FIXTURES / "sample_descriptions.json").read_text())
     else:
@@ -114,6 +114,19 @@ def find_topics(offline: bool = False) -> list[dict]:
             seen.add(key)
             unique.append(c)
     return unique[: cfg.get("max_candidates", 25)]
+
+
+def save_latest(items: list[dict]) -> None:
+    """Keep the newest shortlist where the dashboard can read it."""
+    from .store import get_store
+    data = {"fetched": datetime.now(timezone.utc).date().isoformat(), "items": items}
+    get_store().write("_topics", "latest.json", json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def load_latest() -> dict | None:
+    from .store import get_store
+    text = get_store().read("_topics", "latest.json")
+    return json.loads(text) if text else None
 
 
 def format_topics(topics: list[dict]) -> str:
