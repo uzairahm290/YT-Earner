@@ -54,6 +54,9 @@ class Script(BaseModel):
     tags: list[str] = Field(default_factory=list)
     chapters: list[Chapter] = Field(min_length=2)
     shorts: list[ShortPick] = Field(default_factory=list)
+    # Set by you in the dashboard
+    chosen_title: Optional[str] = None
+    chosen_thumbnail: Optional[str] = None
 
     @field_validator("shorts")
     @classmethod
@@ -195,6 +198,20 @@ def run(slug: str, angle: str | None = None, notes: str | None = None) -> Episod
     for issue in report["issues"]:
         print(f"  ⚠ {issue}")
     return ep
+
+
+def save(slug: str, data: dict) -> tuple[Script, dict]:
+    """Save a hand-edited script (from the dashboard): validate, re-number beats, re-lint."""
+    ep = Episode.load(slug)
+    script = Script.model_validate(data)
+    script.assign_ids()
+    factsheet = ep.read("factsheet.json") or {}
+    report = lint(script, factsheet)
+    topic = ep.read("meta.json")["topic"]
+    ep.write("script.json", script.model_dump())
+    ep.write("script.md", render_script(topic, script, report))
+    ep.write("lint.json", report)
+    return script, report
 
 
 def render_script(topic: str, script: Script, report: dict) -> str:

@@ -102,6 +102,14 @@ def run(topic: str, extra: list[str] | None = None, offline: bool = False) -> Ep
     return ep
 
 
+def save_factsheet(slug: str, factsheet: dict) -> None:
+    """Save a hand-corrected fact sheet (from the dashboard)."""
+    ep = Episode.load(slug)
+    topic = ep.read("meta.json")["topic"]
+    ep.write("factsheet.json", factsheet)
+    ep.write("factsheet.md", render_factsheet(topic, factsheet))
+
+
 def render_factsheet(topic: str, fs: dict) -> str:
     """Human-readable version for your fact-check pass."""
     out = [f"# Fact sheet: {topic}", "", fs.get("summary", ""), ""]
