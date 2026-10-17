@@ -1,6 +1,6 @@
 name: Production worker
 
-# Picks up jobs queued from the dashboard (narration now; visuals and render later).
+# Picks up jobs queued from the dashboard: narration, then video renders.
 # Runs every 10 minutes, and right away when the dashboard has GITHUB_DISPATCH_TOKEN set.
 on:
   schedule:
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   work:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 150   # a 20-minute documentary takes ~15-25 minutes to render
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       WIKI_USER_AGENT: ${{ secrets.WIKI_USER_AGENT }}
@@ -72,3 +72,14 @@ jobs:
       - name: Run queued jobs
         if: steps.queue.outputs.work == 'yes'
         run: python cli.py worker
+
+      # Finished videos are too big for the database, so they're kept here. Download them from
+      # this run's page (Artifacts section) until the upload stage sends them to YouTube.
+      - name: Keep the finished videos
+        if: always() && steps.queue.outputs.work == 'yes' && hashFiles('output/*.mp4') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos-${{ github.run_id }}
+          path: output/
+          retention-days: 30
+          compression-level: 0   # MP4s don't compress further; skip the wasted minutes

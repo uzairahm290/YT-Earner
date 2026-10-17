@@ -12,3 +12,6 @@ episodes/*
 *.mp4
 *.wav
 *.mp3
+
+# Rendered videos (kept as GitHub Actions artifacts, never in git)
+output/

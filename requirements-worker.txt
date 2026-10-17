@@ -1,3 +1,4 @@
 # Only for the production worker (GitHub Actions), not the Render dashboard.
 kokoro-onnx>=0.4,<0.7
 numpy>=1.26
+Pillow>=10.0
