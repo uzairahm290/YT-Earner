@@ -128,8 +128,40 @@ For abstract beats only (see the README for the rules). Uses Kaggle's free GPU, 
    - `KAGGLE_USERNAME`: your Kaggle username (the one in your profile URL)
    - `KAGGLE_API_TOKEN`: the token
 
-Then use **✦ Illustrate** on a story's Pictures tab. The worker pushes a private notebook called
-`docu-illustrate` to your Kaggle account and runs it there; you can open it on kaggle.com/code to watch.
+Then use **✦ Illustrate** on a story's Pictures tab (or ✦ on a single picture). The worker pushes a
+private notebook called `docu-illustrate-<story>` to your Kaggle account and runs it there; you can
+open it on kaggle.com/code to watch. If Kaggle's GPU queue is slow, the batch keeps drawing there and
+a later worker run collects it.
+
+## 7. Optional: one-click YouTube uploads
+
+Without this, the YouTube tab still gives you an upload kit (files + title, description with
+chapters and credits, tags) to paste into YouTube Studio. With it, each video is one click.
+
+1. console.cloud.google.com → create a project (any name, e.g. "Production Desk")
+2. **APIs & Services → Library** → search **YouTube Data API v3** → **Enable**
+3. **APIs & Services → OAuth consent screen** (Google Auth Platform):
+   - User type **External**, app name "Production Desk", your email in both email fields
+   - Scopes: you can skip this page
+   - Test users: add the Google account that owns your channel
+   - Then **Audience → Publish app** (to "In production"). In Testing mode Google cuts the connection
+     every 7 days. You don't need Google's verification for your own use; you'll just see a
+     "Google hasn't verified this app" screen when connecting: **Advanced → Go to Production Desk**.
+4. **Credentials → Create credentials → OAuth client ID** → type **Web application**
+   - Authorized redirect URI: the one shown on the YouTube tab when you're not connected yet,
+     which is your Render address + `/api/youtube/callback`
+     (e.g. `https://production-desk.onrender.com/api/youtube/callback`)
+5. Copy the **Client ID** and **Client secret** and add both, with the same names, in two places:
+   - Render → your service → **Environment**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+   - GitHub repo → **Settings → Secrets and variables → Actions**: the same two
+6. Open a rendered story → **YouTube** tab → **Connect YouTube channel** → pick the channel's account.
+
+**Private until Google's review.** YouTube locks videos uploaded through a new, unreviewed API app to
+private, and a locked video can't be made public later. The review (an "audit") is free:
+support.google.com/youtube/contact/yt_api_form. Until it passes, upload anything that should go
+public with the upload kit, and use the button for private drafts.
+
+Free quota: 10,000 units a day; an upload costs 1,600 and a caption track 400, so about 6 uploads a day.
 
 ## When something's off
 
@@ -144,3 +176,5 @@ Then use **✦ Illustrate** on a story's Pictures tab. The worker pushes a priva
 | Changing the password | Update `DESK_PASSWORD` on Render. Every device gets signed out |
 | Narration stuck on "queued" | Actions → Production worker: is it failing? Usually the `DATABASE_URL` secret is missing |
 | Narration failed | The error shows on the story page. The worker's log in Actions has the details |
+| "YouTube withdrew the channel connection" | The Google app is still in Testing (7-day logins). Publish it (step 7.3), then connect again |
+| Upload says the video "has expired" | GitHub keeps rendered videos 30 days. Render it again, then upload |

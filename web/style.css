@@ -666,3 +666,30 @@ a.btn-primary { color: var(--cue-ink); }
   .sd { grid-template-columns: 1fr; }
   .sd-phone { width: min(240px, 70%); justify-self: center; }
 }
+
+/* ───── YouTube tab ───── */
+.yt-acct { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px;
+  padding: 14px 16px; margin-bottom: 14px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--sheet); }
+.yt-acct p { margin: 0; max-width: 70ch; }
+.yt-acct .hint { flex-basis: 100%; }
+.yt-acct.yt-on { border-left: 4px solid var(--ok); }
+.yt-note { margin-bottom: 18px; }
+.yt-sh { margin: 28px 0 12px; }
+.yt-item { padding: 16px 18px; margin-bottom: 14px; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r-md); }
+.yt-h { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.yt-h h3 { margin: 0 auto 0 0; font-size: 17px; }
+.yt-field { margin-bottom: 12px; }
+.yt-k { display: block; margin-bottom: 5px; font: 600 12px/1.3 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--graphite); }
+.yt-k small { font-weight: 400; letter-spacing: 0; color: var(--faint); margin-left: 6px; }
+.yt-copyrow { display: flex; gap: 8px; }
+.yt-copyrow input, .yt-field textarea {
+  flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 8px 10px;
+  font: 14.5px/1.45 var(--type); color: var(--ink); background: var(--paper);
+  border: 1px solid var(--rule); border-radius: var(--r-sm); resize: none;
+}
+.yt-copy-under { margin-top: 6px; }
+.yt-send { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; padding-top: 12px; border-top: 1px dashed var(--rule-strong); }
+.yt-send label { display: grid; gap: 4px; font: 600 12px/1.3 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--graphite); }
+.yt-send select, .yt-send input { font: 14px/1.2 var(--sans); padding: 7px 9px; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); }
+.yt-done { margin: 10px 0 0; padding: 8px 10px; font-size: 14px; color: var(--ok); background: var(--ok-wash); border-radius: var(--r-sm); overflow-wrap: anywhere; }
+.yt-done a { color: inherit; font-weight: 600; }

@@ -25,3 +25,8 @@ services:
       # for its 10-minute schedule. Optional: add GITHUB_DISPATCH_TOKEN in Render to turn it on.
       - key: GITHUB_REPO
         value: uzairahm290/YT-Earner
+      # One-click YouTube uploads (DEPLOY.md, step 7). Optional.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false

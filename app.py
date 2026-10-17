@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import illustrate, research, script, shorts, topics, visuals, voice
+from pipeline import illustrate, research, script, shorts, topics, visuals, voice, youtube
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -42,6 +42,7 @@ if DEMO:
     os.environ.setdefault("DOCU_MOCK_TTS", "1")
     os.environ.setdefault("DOCU_MOCK_ILLUSTRATE", "1")
     os.environ.setdefault("DOCU_MOCK_VISUALS", "1")
+    os.environ.setdefault("DOCU_MOCK_YOUTUBE", "1")
 
 # The full flow, in order. `built: False` stages show in the UI as coming next.
 STAGES = [
@@ -55,7 +56,7 @@ STAGES = [
     # Shorts run beside the long video rather than after it; the UI marks this stage done
     # once any Short is made (meta.shorts.made), not by status.
     {"key": "shorts", "label": "Shorts", "status": "shorts_ready", "built": True, "parallel": True},
-    {"key": "upload", "label": "Upload", "status": "uploaded", "built": False},
+    {"key": "upload", "label": "Upload", "status": "uploaded", "built": True, "parallel": True},
 ]
 STATUS_ORDER = ["new"] + [s["status"] for s in STAGES if not s.get("parallel")]
 
@@ -203,6 +204,7 @@ def status():
         "stock_video": [p for p in ("pexels", "pixabay") if env(f"{p.upper()}_API_KEY")],
         "preview_seconds": cfg["render"]["preview_seconds"],
         "worker": "inline" if INLINE_WORKER else ("instant" if _dispatch_ready() else "every 10 minutes"),
+        "youtube": youtube.public_account(),
     }
 
 
@@ -246,6 +248,8 @@ def summarize(ep: Episode, files: dict | None = None) -> dict:
         "illustrate_state": (meta.get("illustrate") or {}).get("state"),
         "shorts_state": (meta.get("shorts") or {}).get("state"),
         "shorts_made": len((meta.get("shorts") or {}).get("made") or {}),
+        "youtube_state": (meta.get("youtube") or {}).get("state"),
+        "uploaded": sum(1 for u in (meta.get("upload") or {}).values() if u.get("state") == "done"),
         "running": any(j["slug"] == ep.slug and j["status"] == "running" for j in _jobs.values()),
     }
 
@@ -291,7 +295,15 @@ def get_episode(slug: str):
             "lint": ep.read("lint.json"),
             "voice": timings,
             "visuals": vis,
-            "shorts": _shorts_view(ep)}
+            "shorts": _shorts_view(ep),
+            "youtube": _youtube_view(ep)}
+
+
+def _youtube_view(ep: Episode) -> dict | None:
+    meta = ep.read("meta.json") or {}
+    if (meta.get("render") or {}).get("state") != "done" and not (meta.get("shorts") or {}).get("made"):
+        return None
+    return youtube.package(ep)
 
 
 def _shorts_view(ep: Episode) -> dict | None:
@@ -701,6 +713,117 @@ def short_preview(slug: str, short_id: str):
     return Response(data, media_type="video/mp4", headers={"Cache-Control": "private, max-age=60"})
 
 
+# ──────────────────────────── YouTube ────────────────────────────
+
+def _public_base(request: Request) -> str:
+    # Render sets RENDER_EXTERNAL_URL; behind its proxy request.base_url would say http://.
+    return (env("RENDER_EXTERNAL_URL") or str(request.base_url)).rstrip("/")
+
+
+def _oauth_state() -> str:
+    ts = str(int(time.time()))
+    sig = hmac.new((PASSWORD or "dev").encode(), f"youtube-connect:{ts}".encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{ts}.{sig}"
+
+
+def _oauth_state_ok(state: str) -> bool:
+    ts, _, sig = state.partition(".")
+    if not ts.isdigit() or time.time() - int(ts) > 900:
+        return False
+    good = hmac.new((PASSWORD or "dev").encode(), f"youtube-connect:{ts}".encode(), hashlib.sha256).hexdigest()[:32]
+    return hmac.compare_digest(sig, good)
+
+
+@app.get("/api/youtube")
+def youtube_status(request: Request):
+    return {**youtube.public_account(), "redirect_uri": f"{_public_base(request)}/api/youtube/callback"}
+
+
+@app.get("/api/youtube/connect")
+def youtube_connect(request: Request):
+    if not youtube.configured():
+        raise HTTPException(409, "Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on Render first (see DEPLOY.md, step 7).")
+    redirect = f"{_public_base(request)}/api/youtube/callback"
+    if youtube.mock():
+        return RedirectResponse(f"/api/youtube/callback?code=mock&state={_oauth_state()}", status_code=303)
+    return RedirectResponse(youtube.auth_url(redirect, _oauth_state()), status_code=303)
+
+
+@app.get("/api/youtube/callback")
+def youtube_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if error:
+        return RedirectResponse(f"/#/?youtube={error}", status_code=303)
+    if not _oauth_state_ok(state):
+        raise HTTPException(400, "That sign-in link is stale or wasn't started here. Connect again from the dashboard.")
+    try:
+        youtube.connect(code, f"{_public_base(request)}/api/youtube/callback")
+    except youtube.YouTubeError as e:
+        return RedirectResponse(f"/#/?youtube=failed&why={requests.utils.quote(str(e)[:200])}", status_code=303)
+    return RedirectResponse("/#/?youtube=connected", status_code=303)
+
+
+@app.post("/api/youtube/disconnect")
+def youtube_disconnect():
+    youtube.disconnect()
+    return youtube.public_account()
+
+
+@app.get("/api/episodes/{slug}/youtube")
+def youtube_package(slug: str):
+    return youtube.package(_load(slug))
+
+
+class UploadTarget(BaseModel):
+    what: str                      # "long" or a Short id like "s1"
+    privacy: str = "private"
+    publish_at: str | None = None  # ISO time; YouTube publishes it then
+
+
+class UploadBody(BaseModel):
+    targets: list[UploadTarget]
+
+
+@app.post("/api/episodes/{slug}/youtube/upload")
+def youtube_upload(slug: str, body: UploadBody):
+    ep = _load(slug)
+    if not youtube.public_account()["connected"]:
+        raise HTTPException(409, "Connect your YouTube channel first.")
+    meta = ep.read("meta.json")
+    job = meta.get("youtube") or {}
+    if job.get("state") == "running":
+        raise HTTPException(409, "An upload for this story is running right now.")
+    pack = youtube.package(ep)
+    targets = []
+    for t in body.targets:
+        info = pack["long"] if t.what == "long" else pack["shorts"].get(t.what)
+        if not info or not info["ready"]:
+            raise HTTPException(409, f"{t.what}: render it before uploading.")
+        if t.privacy not in ("private", "unlisted", "public"):
+            raise HTTPException(422, "Privacy is private, unlisted or public.")
+        if t.publish_at:
+            try:
+                when = datetime.fromisoformat(t.publish_at.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(422, "That schedule time isn't a date.")
+            if when.tzinfo is None or when <= datetime.now(timezone.utc):
+                raise HTTPException(422, "Pick a schedule time in the future.")
+        targets.append(t.model_dump())
+    if not targets:
+        raise HTTPException(422, "Nothing to upload.")
+    if job.get("state") == "queued":  # add to the waiting batch
+        have = {t["what"] for t in job.get("targets") or []}
+        targets = (job.get("targets") or []) + [t for t in targets if t["what"] not in have]
+    meta["youtube"] = {"state": "queued", "targets": targets, "error": None, "progress": 0,
+                       "requested_at": datetime.now(timezone.utc).isoformat()}
+    up = meta.get("upload") or {}
+    for t in targets:
+        up[t["what"]] = {**(up.get(t["what"]) or {}), "state": "queued", "error": None}
+    meta["upload"] = up
+    ep.write("meta.json", meta)
+    _nudge_worker("youtube", slug)
+    return get_episode(slug)
+
+
 # ──────────────────────────── render ────────────────────────────
 
 @app.post("/api/episodes/{slug}/render")
@@ -778,7 +901,8 @@ def _queue_voice(ep: Episode, voice_id: str | None) -> None:
 def _nudge_worker(kind: str, slug: str | None = None) -> None:
     if INLINE_WORKER:
         from pipeline import worker
-        label = {"illustrate": "Drawing illustrations", "render": "Rendering", "shorts": "Making Shorts"}.get(kind, kind)
+        label = {"illustrate": "Drawing illustrations", "render": "Rendering", "shorts": "Making Shorts",
+                 "youtube": "Uploading to YouTube"}.get(kind, kind)
         start_job(kind, label, lambda: worker.run_jobs(kind), slug=slug)
     else:
         _dispatch_worker()

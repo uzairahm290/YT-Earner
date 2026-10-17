@@ -200,16 +200,16 @@ async function poll() {
 // Narration and renders run on the GitHub worker, not in this server's job list,
 // so their state is read from the episode list (and the open story, for render progress).
 let lastWorkerCheck = 0;
-const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}|${e.shorts_state}|${e.shorts_made}`;
+const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}|${e.shorts_state}|${e.shorts_made}|${e.youtube_state}|${e.uploaded}`;
 async function watchVoice() {
-  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state].some((s) => ["queued", "running", "waiting"].includes(s));
+  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state, e.youtube_state].some((s) => ["queued", "running", "waiting"].includes(s));
   if (!state.episodes.some(busy) || Date.now() - lastWorkerCheck < 8000) return;
   lastWorkerCheck = Date.now();
   const before = new Map(state.episodes.map((e) => [e.slug, workerState(e)]));
   state.episodes = await api("/api/episodes");
   const changed = state.episodes.filter((e) => before.get(e.slug) !== workerState(e));
   const route = parseRoute();
-  const openRendering = route.view === "episode" && [state.ep?.meta?.render?.state, state.ep?.meta?.shorts?.state].includes("running");
+  const openRendering = route.view === "episode" && [state.ep?.meta?.render?.state, state.ep?.meta?.shorts?.state, state.ep?.meta?.youtube?.state].includes("running");
   if (!changed.length) {
     // keep the progress bar moving on the story you're looking at
     if (openRendering && !state.dirty && !state.sdirty) await loadEpisode(route.slug, true);
@@ -226,6 +226,8 @@ async function watchVoice() {
     if (e.illustrate_state === "error" && was[2] !== "error") toast(`Illustrations failed: ${e.topic}`, true);
     if (e.shorts_state === "done" && (was[3] !== "done" || was[4] !== String(e.shorts_made))) toast(`Shorts ready: ${e.topic}`);
     if (e.shorts_state === "error" && was[3] !== "error") toast(`Shorts failed: ${e.topic}`, true);
+    if (e.youtube_state === "done" && (was[5] !== "done" || was[6] !== String(e.uploaded))) toast(`Uploaded to YouTube: ${e.topic}`);
+    if (e.youtube_state === "error" && was[5] !== "error") toast(`YouTube upload failed: ${e.topic}`, true);
   }
   if (route.view === "episode" && changed.some((e) => e.slug === route.slug) && !state.dirty && !state.sdirty) await loadEpisode(route.slug, true);
   else if (route.view === "desk") render();
@@ -386,9 +388,12 @@ function renderEpisode() {
     // "Verify facts" only counts as done when every flagged fact is ticked, even if the story moved on.
     let done = st.key === "verify" ? ep.verify_done >= ep.verify_total && sr <= r : sr <= r;
     let current = sr === r + 1 || (st.key === "verify" && sr <= r);
-    if (st.parallel) {  // Shorts: done once any is made, open as soon as pictures are approved
+    if (st.key === "shorts") {  // done once any is made, open as soon as pictures are approved
       done = ep.shorts_made > 0;
       current = !done && ["visuals_ready", "rendered"].includes(ep.status);
+    } else if (st.key === "upload") {
+      done = ep.uploaded > 0;
+      current = !done && (ep.status === "rendered" || ep.shorts_made > 0);
     }
     const cls = !st.built ? "upcoming" : done ? "done" : current ? "current" : "";
     return `<li class="stage ${cls}"><span class="s-n">${i + 1}</span><span class="s-l">${esc(st.label)}</span></li>`;
@@ -403,6 +408,7 @@ function renderEpisode() {
     ["visuals", "Pictures", ep.visuals ? (ep.visuals.summary.needs_you ? `${ep.visuals.summary.needs_you} need you` : "✓") : ""],
     ["package", "Title and thumbnail", ""],
     ...(ep.meta?.render?.state === "done" ? [["video", "Video", "✓"]] : []),
+    ...(ep.youtube ? [["youtube", "YouTube", ep.uploaded ? `${ep.uploaded} up` : ""]] : []),
   ];
 
   $("#main").innerHTML = `
@@ -506,10 +512,11 @@ function nextStep(ep, running, flags) {
     }
     case "rendered": {
       const r = ep.meta?.render || {};
-      return box(`<strong>Video rendered:</strong> ${clock(r.duration || 0)}, ${r.size_mb || "?"} MB, ${r.shots || "?"} shots${r.fallbacks ? `, ${r.fallbacks} used a card because their picture wouldn't load` : ""}. Upload to YouTube is the next stage.`,
+      return box(`<strong>Video rendered:</strong> ${clock(r.duration || 0)}, ${r.size_mb || "?"} MB, ${r.shots || "?"} shots${r.fallbacks ? `, ${r.fallbacks} used a card because their picture wouldn't load` : ""}. Upload it from the YouTube tab.`,
         `${state.tab !== "video" ? `<button class="btn btn-primary" data-tab="video">Watch the preview</button>` : ""}
          ${downloadLink(r, "btn")}
          ${state.tab !== "shorts" ? `<button class="btn" data-tab="shorts">${ep.shorts_made ? "Shorts" : "Make Shorts"}</button>` : ""}
+         ${state.tab !== "youtube" ? `<button class="btn" data-tab="youtube">YouTube</button>` : ""}
          <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
     }
     default:
@@ -535,6 +542,7 @@ function renderTab() {
   else if (state.tab === "shorts") body.innerHTML = shortsTab();
   else if (state.tab === "visuals") body.innerHTML = visualsTab();
   else if (state.tab === "video") { body.innerHTML = videoTab(); loadPreview(); }
+  else if (state.tab === "youtube") body.innerHTML = youtubeTab();
   else body.innerHTML = packageTab();
   $$("textarea.autosize", body).forEach(autosize);
 }
@@ -1101,6 +1109,59 @@ function shortsDesk() {
     </div>`;
 }
 
+// ───── YouTube ─────
+
+function youtubeTab() {
+  const ep = state.ep;
+  const pack = ep.youtube;
+  const acct = state.status.youtube || {};
+  const up = ep.meta?.upload || {};
+  const job = ep.meta?.youtube || {};
+
+  let account;
+  if (!acct.configured) {
+    account = `<div class="yt-acct"><p><strong>One-time setup for one-click uploads.</strong> Make a free Google Cloud app with the YouTube API, then add its <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> on Render and as GitHub secrets. Steps: DEPLOY.md, section 7.</p>
+      <p class="hint">Until then, use the upload kit below: everything is ready to copy into YouTube Studio.</p></div>`;
+  } else if (!acct.connected) {
+    account = `<div class="yt-acct"><p><strong>Connect your channel</strong> to upload from here. You sign in with Google once; the desk only gets permission to upload and add captions.</p>
+      <a class="btn btn-primary" href="/api/youtube/connect" data-act="yt-connect">Connect YouTube channel</a></div>`;
+  } else {
+    account = `<div class="yt-acct yt-on"><p>Uploading to <strong>${esc(acct.channel || "your channel")}</strong></p>
+      <button class="btn btn-quiet" data-act="yt-disconnect">Disconnect</button></div>`;
+  }
+
+  const row = (what, info, label) => {
+    const u = up[what] || {};
+    const busy = ["queued", "running"].includes(u.state) && ["queued", "running"].includes(job.state);
+    const src = what === "long" ? (ep.meta?.render || {}) : (ep.meta?.shorts?.made || {})[what] || {};
+    const status = u.state === "done"
+      ? `<p class="yt-done">On YouTube: <a href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a> · ${esc(u.privacy)}${u.publish_at ? `, publishes ${esc(new Date(u.publish_at).toLocaleString())}` : ""}${u.captions === true ? " · captions added" : typeof u.captions === "string" ? ` · <span class="v-err">${esc(u.captions)}</span>` : ""}</p>`
+      : busy ? `<p class="v-note">${job.state === "running" ? `Uploading… ${job.progress || 0}%` : "Queued to upload."}</p>`
+      : u.state === "error" ? `<p class="v-note v-err">Upload failed: ${esc(u.error || job.error || "")}</p>` : "";
+    return `<article class="yt-item" data-what="${esc(what)}">
+      <header class="yt-h"><h3>${esc(label)}</h3>${downloadLink({ run_id: src.run_id, repo: src.repo, file: info.file }, "btn btn-quiet").replace("Download full video", what === "long" ? "Download video" : "Download Short")}
+        ${what === "long" && ep.meta?.render?.state === "done" ? `<a class="btn btn-quiet" href="/api/episodes/${encodeURIComponent(ep.slug)}/captions.srt">Captions (.srt)</a>` : ""}</header>
+      <div class="yt-field"><span class="yt-k">Title <small>${info.title.length}/100</small></span><div class="yt-copyrow"><input type="text" readonly value="${esc(info.title)}"><button class="btn btn-quiet" data-act="yt-copy" data-copy="title">Copy</button></div></div>
+      <div class="yt-field"><span class="yt-k">Description</span><textarea readonly class="autosize" rows="4">${esc(info.description)}</textarea><button class="btn btn-quiet yt-copy-under" data-act="yt-copy" data-copy="description">Copy description</button></div>
+      <div class="yt-field"><span class="yt-k">Tags</span><div class="yt-copyrow"><input type="text" readonly value="${esc(info.tags.join(", "))}"><button class="btn btn-quiet" data-act="yt-copy" data-copy="tags">Copy</button></div></div>
+      ${acct.connected && u.state !== "done" ? `<div class="yt-send">
+        <label>Visibility <select class="yt-privacy">
+          <option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option></select></label>
+        <label>Schedule <input type="datetime-local" class="yt-when" aria-label="Publish at (optional)"></label>
+        <button class="btn btn-primary" data-act="yt-upload" ${busy ? "disabled" : ""}>Upload to YouTube</button>
+      </div>` : ""}
+      ${status}
+    </article>`;
+  };
+
+  const shortsIds = Object.keys(pack.shorts || {});
+  return `
+    ${account}
+    <p class="v-note yt-note">YouTube keeps videos uploaded through a new, unreviewed app <b>private</b> until the app passes Google's free review (<a href="https://support.google.com/youtube/contact/yt_api_form" target="_blank" rel="noopener">audit form</a>), and a locked video can't be switched to public later. Until then, upload anything that should go public with the kit: download, then paste the title, description and tags in YouTube Studio. Free quota: about 6 uploads a day.</p>
+    ${pack.long.ready ? row("long", pack.long, "Long video") : `<p class="hint">Render the long video to get its upload kit.</p>`}
+    ${shortsIds.length ? `<h2 class="yt-sh">Shorts</h2>${shortsIds.map((id) => row(id, pack.shorts[id], `Short ${id.toUpperCase()}`)).join("")}` : ""}`;
+}
+
 function shortsTab() {
   if (["visuals_ready", "rendered"].includes(state.ep.status) && state.sdraft) return shortsDesk();
   if (!state.draft) return `<div class="empty"><h2>No Shorts yet</h2><p>The script marks the moments that work as Shorts. Write the script first.</p></div>`;
@@ -1396,6 +1457,30 @@ document.addEventListener("click", async (e) => {
         await navigator.clipboard.writeText(state.ep.visuals.credits.join("\n"));
         toast("Credits copied"); break;
 
+      case "yt-copy": {
+        const item = btn.closest("[data-what]");
+        const info = item.dataset.what === "long" ? state.ep.youtube.long : state.ep.youtube.shorts[item.dataset.what];
+        const text = btn.dataset.copy === "tags" ? info.tags.join(", ") : info[btn.dataset.copy];
+        await navigator.clipboard.writeText(text);
+        toast(`${btn.dataset.copy[0].toUpperCase()}${btn.dataset.copy.slice(1)} copied`); break;
+      }
+      case "yt-connect": sessionStorageSet("ytReturn", location.hash); return;  // let the link navigate
+      case "yt-disconnect": {
+        if (!confirm("Disconnect this YouTube channel from the desk?")) break;
+        state.status.youtube = await api("/api/youtube/disconnect", { method: "POST" });
+        renderEpisode(); break;
+      }
+      case "yt-upload": {
+        const item = btn.closest("[data-what]");
+        const when = item.querySelector(".yt-when").value;
+        const target = { what: item.dataset.what, privacy: item.querySelector(".yt-privacy").value,
+          publish_at: when ? new Date(when).toISOString() : null };
+        state.ep = await api(`/api/episodes/${slug}/youtube/upload`, { method: "POST", body: { targets: [target] } });
+        state.episodes = await api("/api/episodes");
+        await poll();
+        lastWorkerCheck = 0;
+        toast("Queued to upload"); renderEpisode(); break;
+      }
       case "save-shorts": await saveShorts(); toast("Shorts saved"); renderEpisode(); break;
       case "reset-shorts": {
         if (!confirm("Throw away your edits to the Shorts and start again from the script?")) break;
@@ -1554,6 +1639,9 @@ async function saveShorts() {
   state.sdirty = false;
 }
 
+function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
+function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch { /* private mode */ } }
+
 // One picture at a time: the ✦ form on a beat in the Pictures tab.
 document.addEventListener("submit", async (e) => {
   const form = e.target.closest("form.v-drawform");
@@ -1620,6 +1708,13 @@ window.addEventListener("beforeunload", (e) => { if (state.dirty) { e.preventDef
   }
   lastJobs = new Map(state.jobs.map((j) => [j.id, j.status]));
   renderJobs();
+  // Back from Google's sign-in page.
+  const yt = new URLSearchParams(location.hash.split("?")[1] || "");
+  if (yt.get("youtube")) {
+    const ok = yt.get("youtube") === "connected";
+    toast(ok ? `YouTube connected: ${state.status.youtube?.channel || "your channel"}` : `YouTube didn't connect: ${yt.get("why") || yt.get("youtube")}`, !ok);
+    history.replaceState(null, "", sessionStorageGet("ytReturn") || "#/");
+  }
   await route();
   setInterval(poll, 1500);
   setInterval(() => { if (state.jobs.some((j) => j.status === "running")) renderJobs(); }, 1000);

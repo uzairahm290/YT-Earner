@@ -18,11 +18,12 @@ from datetime import datetime, timedelta, timezone
 from .episode import Episode
 
 # Job kinds, in the order they run. Each lives in meta.json under its own key.
-KINDS = ("voice", "illustrate", "render", "shorts")
+KINDS = ("voice", "illustrate", "render", "shorts", "youtube")
 
 # A job marked running longer than this was abandoned (runner died, timed out, cancelled).
 STALE_AFTER = {"voice": timedelta(minutes=45), "illustrate": timedelta(minutes=75),
-               "render": timedelta(minutes=130), "shorts": timedelta(minutes=90)}
+               "render": timedelta(minutes=130), "shorts": timedelta(minutes=90),
+               "youtube": timedelta(minutes=90)}
 
 
 def _now() -> datetime:
@@ -105,6 +106,9 @@ def run_jobs(kind: str) -> tuple[int, int]:
     elif kind == "shorts":
         from . import shorts as stage
         work = lambda slug, job: stage.run(slug, job.get("ids"), progress=_progress(slug, "shorts"))  # noqa: E731
+    elif kind == "youtube":
+        from . import youtube as stage
+        work = lambda slug, job: stage.run(slug, job.get("targets") or [], progress=_progress(slug, "youtube"))  # noqa: E731
     else:
         from . import render as stage
         work = lambda slug, job: stage.run(slug, progress=_progress(slug, "render"))  # noqa: E731
