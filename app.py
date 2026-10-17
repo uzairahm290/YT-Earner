@@ -534,8 +534,12 @@ def request_illustrations(slug: str, body: IllustrateBody):
     if not manifest:
         raise HTTPException(409, "Find pictures first.")
     meta = ep.read("meta.json")
-    if (meta.get("illustrate") or {}).get("state") in ("queued", "running"):
+    state = (meta.get("illustrate") or {}).get("state")
+    if state == "running":
         raise HTTPException(409, "Illustrations for this story are already being drawn.")
+    if state == "queued":  # pressing again just nudges a worker that hasn't picked it up
+        _nudge_worker("illustrate")
+        return get_episode(slug)
     beats = {b["id"]: b for b in manifest["beats"]}
     wanted = body.beats or illustrate.candidates_for(manifest)
     for bid in wanted:
@@ -567,8 +571,12 @@ def request_render(slug: str):
     meta = ep.read("meta.json")
     if meta["status"] not in ("visuals_ready", "rendered"):
         raise HTTPException(409, "Approve the narration and pictures first.")
-    if (meta.get("render") or {}).get("state") in ("queued", "running"):
-        raise HTTPException(409, "This video is already in the render queue.")
+    state = (meta.get("render") or {}).get("state")
+    if state == "running":
+        raise HTTPException(409, "This video is already rendering.")
+    if state == "queued":
+        _nudge_worker("render")
+        return get_episode(slug)
     meta["render"] = {"state": "queued", "requested_at": datetime.now(timezone.utc).isoformat()}
     ep.write("meta.json", meta)
     if meta["status"] == "rendered":
@@ -625,6 +633,14 @@ def _queue_voice(ep: Episode, voice_id: str | None) -> None:
     if INLINE_WORKER:
         from pipeline import worker
         start_job("voice", f"Narrating {meta['topic']}", lambda: worker.run_voice_jobs(), slug=ep.slug)
+    else:
+        _dispatch_worker()
+
+
+def _nudge_worker(kind: str) -> None:
+    if INLINE_WORKER:
+        from pipeline import worker
+        start_job(kind, f"Resuming queued {kind}", lambda: worker.run_jobs(kind))
     else:
         _dispatch_worker()
 
