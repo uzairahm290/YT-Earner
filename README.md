@@ -6,7 +6,7 @@ That human step is what keeps the channel on the right side of YouTube's inauthe
 
 ```
 topics ─► research ─► script ─► voice ─► visuals ─► render ─► shorts ─► upload
-  ✅         ✅          ✅        ✅        ✅       next      next      next
+  ✅         ✅          ✅        ✅        ✅        ✅       next      next
 ```
 
 ## The dashboard
@@ -25,6 +25,7 @@ Everything runs from the Production Desk:
 - **Script**: a two-column picture/narration paper edit. Running timecodes, shot type and search for each beat, lower thirds, pauses. AI phrases get marked in red as you type; numbers that aren't in the fact sheet get marked on save. Approve is locked until it's clean.
 - **Narration**: approving a script queues it for the narrator (Kokoro-82M, 7 voices to pick from). When it's done, every beat gets a play button and the script follows along as it plays. Edit the script and the recording is marked out of date.
 - **Pictures**: a real picture for every beat. Photos from Wikimedia Commons (freely licensed only, credited), stock footage from Pexels/Pixabay when a key is set, and clean cards for figures and titles. Documents get a card flagged for you to upload a screenshot of the real thing. Pick alternates, search again in your own words, or upload your own. Credits are collected for the description.
+- **Render**: one click cuts the 1080p video on the GitHub worker: Ken Burns moves on photos, stock clips trimmed to the beat, cards in the channel's type, lower thirds, one grade with light grain, narration mastered on top, plus an SRT caption file. A 60-second preview plays in the dashboard; the full MP4 downloads from the GitHub run (kept 30 days).
 - **Shorts**: phone-shaped previews of each Short with its hook line.
 - **Title and thumbnail**: pick or write the title, thumbnail text and description.
 
@@ -41,6 +42,7 @@ To put it online behind a password (Render + Supabase, free), see **[DEPLOY.md](
 | Script | `python cli.py script nokia --angle "..." --notes "..."` | `script.md` to read and edit, `script.json` for the next stages |
 | Voice | `python cli.py voice nokia --voice am_onyx` | one mastered MP3 (-16 LUFS) + start/end time of every beat |
 | Pictures | dashboard → Pictures tab | `visuals.json`: candidates, your pick and the credit for every beat (files download at render time) |
+| Render | dashboard → Render the video | `output/<slug>.mp4` + `.srt`, uploaded as a GitHub Actions artifact |
 | Worker | `python cli.py worker` | runs whatever the dashboard queued; this is what GitHub Actions calls |
 
 The script is broken into **beats**: one beat = 1–3 sentences of narration plus the exact shot to cut to
@@ -77,12 +79,14 @@ pipeline/
   llm.py             any OpenAI-compatible endpoint (Gemini / Groq / local)
   voice.py           script → Kokoro narration → FFmpeg mastering → MP3 + beat timings
   visuals.py         beat → Commons photos / Pexels+Pixabay video / cards, licenses and credits
+  render.py          shots → Ken Burns / clips / cards + lower thirds → graded 1080p MP4 + captions
   worker.py          job queue: claims queued episodes, runs them, records errors
   episode.py         per-video files + status
   store.py           where files live: episodes/ folder locally, Supabase when DATABASE_URL is set
 app.py               dashboard server (FastAPI) + login
 render.yaml          Render blueprint
 web/                 dashboard frontend (plain HTML/CSS/JS, no build step)
+assets/fonts/        Archivo + Courier Prime (SIL Open Font License) for cards and lower thirds
 cli.py
 tests/               offline tests + fixtures (DOCU_MOCK_LLM=1 replays canned LLM replies)
 .github/workflows/   production worker (every 10 min), daily topic shortlist, tests
