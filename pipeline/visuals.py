@@ -332,7 +332,8 @@ def summary(manifest: dict) -> dict:
     chosen = [b["candidates"][b["chosen"]] for b in beats if b["candidates"]]
     return {
         "beats": len(beats),
-        "real": sum(c["source"] != "card" for c in chosen),
+        "real": sum(c["source"] not in ("card", "ai") for c in chosen),
+        "illustrations": sum(c["source"] == "ai" for c in chosen),
         "cards": sum(c["source"] == "card" for c in chosen),
         "needs_you": sum(1 for b, c in zip(beats, chosen) if c.get("needs_screenshot") or b.get("missing")),
     }
@@ -364,7 +365,7 @@ def research_beat(slug: str, beat_id: str, query: str) -> dict:
     ep = Episode.load(slug)
     m = ep.read("visuals.json")
     b = _beat(m, beat_id)
-    uploads = [c for c in b["candidates"] if c["source"] == "upload"]
+    uploads = [c for c in b["candidates"] if c["source"] in ("upload", "ai")]  # your own and drawn ones stay
     fresh = find_for_beat({"id": beat_id, "visual": {"type": b["type"], "query": query},
                            "on_screen_text": None})
     b.update(candidates=uploads + fresh["candidates"], chosen=0, query=query,
@@ -415,7 +416,7 @@ def credits(manifest: dict) -> list[str]:
         if not b["candidates"]:
             continue
         c = b["candidates"][b["chosen"]]
-        if c["source"] in ("card", "upload") or c.get("page") in seen:
+        if c["source"] in ("card", "upload", "ai") or c.get("page") in seen:
             continue
         seen.add(c.get("page"))
         where = {"commons": "Wikimedia Commons", "pexels": "Pexels", "pixabay": "Pixabay"}[c["source"]]

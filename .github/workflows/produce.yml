@@ -1,6 +1,6 @@
 name: Production worker
 
-# Picks up jobs queued from the dashboard: narration, then video renders.
+# Picks up jobs queued from the dashboard: narration, AI illustrations (on Kaggle), then video renders.
 # Runs every 10 minutes, and right away when the dashboard has GITHUB_DISPATCH_TOKEN set.
 on:
   schedule:
@@ -19,6 +19,9 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       WIKI_USER_AGENT: ${{ secrets.WIKI_USER_AGENT }}
+      # For AI illustrations on Kaggle's free GPU (optional)
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
     steps:
       # Without the secret there's nothing to read from. Skip quietly instead of failing
       # every 10 minutes (each failed run would send you an email).
@@ -59,7 +62,7 @@ jobs:
       - name: Install the worker's tools
         if: steps.queue.outputs.work == 'yes'
         run: |
-          pip install -r requirements-worker.txt
+          pip install -r requirements-worker.txt "kaggle>=2.0"
           which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
 
       - name: Cache the voice model (~350 MB)

@@ -187,7 +187,7 @@ def fetch(candidate: dict, ep: Episode, dest: Path, session: requests.Session) -
     """Download (or decode) the chosen picture. None = fall back to a card."""
     if candidate["source"] == "card":
         return draw_card(candidate, dest.with_suffix(".jpg"))
-    if candidate["source"] == "upload":
+    if candidate["source"] in ("upload", "ai"):
         found = visuals.load_upload(ep, candidate["file"])
         if not found:
             return None

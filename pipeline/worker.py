@@ -1,6 +1,7 @@
 """The production worker: picks up jobs the dashboard queued and runs them.
 
-The dashboard (on Render's tiny free instance) can't run a voice model or encode video, so heavy
+The dashboard (on Render's tiny free instance) can't run a voice model, draw with SDXL or encode
+video, so heavy
 stages work like a mailbox. Clicking "Record narration" or "Render video" marks the episode as
 queued in the database; this worker, running on a free GitHub Actions machine, finds queued
 episodes and does the work.
@@ -17,10 +18,11 @@ from datetime import datetime, timedelta, timezone
 from .episode import Episode
 
 # Job kinds, in the order they run. Each lives in meta.json under its own key.
-KINDS = ("voice", "render")
+KINDS = ("voice", "illustrate", "render")
 
 # A job marked running longer than this was abandoned (runner died, timed out, cancelled).
-STALE_AFTER = {"voice": timedelta(minutes=45), "render": timedelta(minutes=130)}
+STALE_AFTER = {"voice": timedelta(minutes=45), "illustrate": timedelta(minutes=60),
+               "render": timedelta(minutes=130)}
 
 
 def _now() -> datetime:
@@ -97,6 +99,9 @@ def run_jobs(kind: str) -> tuple[int, int]:
     if kind == "voice":
         from . import voice as stage  # pulls in the model only when there's work
         work = lambda slug, job: stage.run(slug, job.get("voice"))  # noqa: E731
+    elif kind == "illustrate":
+        from . import illustrate as stage
+        work = lambda slug, job: stage.run(slug, job.get("beats") or [])  # noqa: E731
     else:
         from . import render as stage
         work = lambda slug, job: stage.run(slug, progress=_progress(slug, "render"))  # noqa: E731
