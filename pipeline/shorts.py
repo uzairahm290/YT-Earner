@@ -35,7 +35,7 @@ import requests
 
 from .config import load_config, user_agent
 from .episode import Episode
-from . import render, visuals, voice
+from . import audio, render, visuals, voice
 
 INK, MARKER, WHITE = render.INK, render.MARKER, (255, 255, 255)
 
@@ -199,10 +199,10 @@ _WEAK = {"a", "an", "the", "of", "in", "on", "to", "and", "or", "but", "for", "w
          "its", "it's", "his", "her", "their", "this", "that", "is", "was", "as", "into", "than", "so"}
 
 
-def pages(words: list[str]) -> list[list[int]]:
+def pages(words: list[str], per: int | None = None) -> list[list[int]]:
     """Group word indexes into caption pages: up to N words, broken after punctuation when
     possible, never ending a page on "the", "of", "in"... (the reader's eye stalls there)."""
-    per = cfg()["words_per_page"]
+    per = per or cfg()["words_per_page"]
     out, cur = [], []
     for i, w in enumerate(words):
         cur.append(i)
@@ -241,11 +241,11 @@ def _layout(draw, words: list[str], font, max_w: int) -> list[list[tuple[int, st
     return lines
 
 
-def draw_caption(words: list[str], page: list[int], current: int | None, path: Path) -> Path:
-    """One caption state: the page's words, `current` on the yellow chip."""
+def draw_caption(words: list[str], page: list[int], current: int | None, path: Path, scale: float = 1.0) -> Path:
+    """One caption state: the page's words, `current` on the yellow chip. The hook uses scale > 1."""
     from PIL import Image, ImageDraw, ImageFilter
     W, H = _band_size()
-    size = cfg()["caption_size"]
+    size = int(cfg()["caption_size"] * scale)
     font = render._font(size, 820, 88)
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -418,7 +418,18 @@ def still_filter(index: int, frames: int, size: tuple[int, int], landscape: bool
             f"zoompan=z='{z0}+({z1}-{z0})*{p}':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)*0.4':d={frames}:s={W}x{H}:fps={fps}")
 
 
-def make_shot(index: int, asset: Path, kind: str, frames: int, out: Path) -> Path:
+def punch_filter(frames: int) -> str:
+    """The hook's first shot: starts 20% closer and settles back in 0.6 s, then drifts in."""
+    c = cfg()
+    W, H, fps = c["width"], c["height"], c["fps"]
+    k = max(2, int(0.6 * fps))
+    z = f"if(lt(on,{k}),1.2-0.15*(1-pow(1-on/{k},3)),1.05+0.04*(on-{k})/{max(1, frames - k)})"
+    return (f"scale={int(W * 1.5)}:{int(H * 1.5)}:force_original_aspect_ratio=increase,"
+            f"crop={int(W * 1.5)}:{int(H * 1.5)},setsar=1,"
+            f"zoompan=z='{z}':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)*0.45':d={frames}:s={W}x{H}:fps={fps}")
+
+
+def make_shot(index: int, asset: Path, kind: str, frames: int, out: Path, punch: bool = False) -> Path:
     c = cfg()
     enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
            "-r", str(c["fps"]), "-an", "-frames:v", str(frames)]
@@ -431,7 +442,8 @@ def make_shot(index: int, asset: Path, kind: str, frames: int, out: Path) -> Pat
     with Image.open(asset) as im:
         size = im.size
     landscape = size[0] / size[1] > c["width"] / c["height"] * 1.25
-    vf = f"{still_filter(index, frames, size, landscape)},{_grade()}"
+    move = punch_filter(frames) if punch else still_filter(index, frames, size, landscape)
+    vf = f"{move},{_grade()}"
     render._ff("-loop", "1", "-i", str(asset), "-vf", vf, *enc, str(out), what=f"short shot {index}")
     return out
 
@@ -452,18 +464,24 @@ def make_one(ep: Episode, item: dict, label: str, end_title: str, beats: dict, n
     parts = [np.zeros(int(lead * sr), dtype=np.float32)]
     cursor = lead
     for u in spoken:
-        audio = narrator.speak(u["text"], speed=c["speed"])
-        length = len(audio) / sr
+        clip = narrator.speak(u["text"], speed=c["speed"])
+        length = len(clip) / sr
         u["start"], u["end"] = cursor, cursor + length
-        heard = [(w, cursor + s, cursor + e) for w, s, e in listener.words(audio, sr)]
+        heard = [(w, cursor + s, cursor + e) for w, s, e in listener.words(clip, sr)]
         u["words"] = u["text"].split()
         u["times"] = align(u["words"], heard, u["start"], u["end"])
-        parts += [audio, np.zeros(int(gap * sr), dtype=np.float32)]
+        parts += [clip, np.zeros(int(gap * sr), dtype=np.float32)]
         cursor += length + gap
     parts.append(np.zeros(int(tail * sr), dtype=np.float32))
     track = np.concatenate(parts)
     duration = len(track) / sr
     (tmp / "voice.mp3").write_bytes(voice.master_to_mp3(track))
+    music = audio.choice(ep.read("meta.json") or {})
+    bed = audio.bed_file(music, tmp)
+    # A whoosh as the hook hands over to the story; music a touch louder than in the long video.
+    hand_over = [max(0.0, spoken[1]["start"] - 0.3)] if len(spoken) > 1 else []
+    audio.mix(tmp / "voice.mp3", duration, tmp / "sound.m4a", bed, whooshes=hand_over,
+              music_db=audio.cfg()["music_db"] + 2)
 
     # Pictures change on the first word of each line (the hook starts at 0).
     for i, u in enumerate(spoken):
@@ -490,7 +508,7 @@ def make_one(ep: Episode, item: dict, label: str, end_title: str, beats: dict, n
             fallbacks += shot["pick"] is not None and shot["pick"]["source"] != "card"
         out = tmp / f"shot{i:02}.mp4"
         try:
-            make_shot(i, asset, kind, frames, out)
+            make_shot(i, asset, kind, frames, out, punch=(i == 0 and kind == "image"))
         except render.RenderError:
             fallbacks += 1
             make_shot(i, draw_card(visuals.make_card(_beat_stub(shot["beat"], beats)), tmp / f"fb{i:02}.jpg"),
@@ -511,9 +529,11 @@ def make_one(ep: Episode, item: dict, label: str, end_title: str, beats: dict, n
     timeline: list[tuple[Path, float]] = []  # (image, start time)
     timeline.append((blank, 0.0))
     for ui, u in enumerate(spoken):
-        for pi, page in enumerate(pages(u["words"])):
+        hook = u["role"] == "hook"  # the hook lands 2-3 big words at a time
+        for pi, page in enumerate(pages(u["words"], per=3 if hook else None)):
             for wi in page:
-                img = draw_caption(u["words"], page, wi, caps / f"u{ui:02}p{pi:02}w{wi:03}.png")
+                img = draw_caption(u["words"], page, wi, caps / f"u{ui:02}p{pi:02}w{wi:03}.png",
+                                   scale=1.4 if hook else 1.0)
                 timeline.append((img, u["times"][wi][0]))
     timeline.append((blank, duration - 0.05))
     lines = ["ffconcat version 1.0"]
@@ -531,10 +551,10 @@ def make_one(ep: Episode, item: dict, label: str, end_title: str, beats: dict, n
              f"[2:v]format=rgba,setpts=PTS-STARTPTS[c];[t][c]overlay=0:{cap_y}:eof_action=repeat[v]")
     render._ff("-i", str(tmp / "picture.mp4"), "-loop", "1", "-i", str(title),
                "-f", "concat", "-safe", "0", "-i", str(caps / "caps.ffconcat"),
-               "-i", str(tmp / "voice.mp3"),
+               "-i", str(tmp / "sound.m4a"),
                "-filter_complex", graph, "-map", "[v]", "-map", "3:a",
                "-c:v", "libx264", "-preset", "veryfast", "-crf", str(c["crf"]), "-pix_fmt", "yuv420p",
-               "-maxrate", "8M", "-bufsize", "16M", "-r", str(fps), "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
+               "-maxrate", "8M", "-bufsize", "16M", "-r", str(fps), "-c:a", "copy",
                "-t", f"{duration:.3f}", "-movflags", "+faststart", str(final), what=f"{item['id']} final cut")
 
     preview = tmp / f"{item['id']}-preview.mp4"
@@ -546,6 +566,7 @@ def make_one(ep: Episode, item: dict, label: str, end_title: str, beats: dict, n
             "size_mb": round(final.stat().st_size / 1e6, 1), "file": final.name,
             "words": sum(len(u["words"]) for u in spoken),
             "timed_by": "whisper" if listener.model is not None else "word length",
+            "music": music,
             "run_id": os.getenv("GITHUB_RUN_ID"), "repo": os.getenv("GITHUB_REPOSITORY"),
             "made_at": datetime.now(timezone.utc).isoformat()}
 
