@@ -6,6 +6,8 @@
   python cli.py script nokia --angle "..."     # documentary script -> episodes/nokia/script.md
   python cli.py make "Nokia" --angle "..."     # research + script in one go
   python cli.py list                           # all episodes and where they're at
+  python cli.py voice nokia --voice am_onyx    # narrate locally
+  python cli.py worker                         # run queued jobs (what GitHub Actions does)
 
 Add --offline to topics/research/make to run on test fixtures (no internet, no API key needed
 when combined with DOCU_MOCK_LLM=1).
@@ -74,6 +76,17 @@ def cmd_push_local(_):
         print(f"  ✓ {slug} ({len(files)} files)")
 
 
+def cmd_voice(a):
+    from pipeline import voice
+    ep = voice.run(a.slug, a.voice)
+    print(f"\nNarration saved with episode {ep.slug}. Play it from the dashboard's Script tab.")
+
+
+def cmd_worker(a):
+    from pipeline import worker
+    sys.exit(worker.main(check_only=a.check))
+
+
 def main():
     ap = argparse.ArgumentParser(description="Documentary pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -102,13 +115,22 @@ def main():
     p = sub.add_parser("list", help="show episodes")
     p.set_defaults(fn=cmd_list)
 
+    p = sub.add_parser("voice", help="narrate an episode's script right here")
+    p.add_argument("slug")
+    p.add_argument("--voice", help="Kokoro voice id, e.g. am_michael (see config.yaml)")
+    p.set_defaults(fn=cmd_voice)
+
+    p = sub.add_parser("worker", help="run every job the dashboard queued (used by GitHub Actions)")
+    p.add_argument("--check", action="store_true", help="only report whether anything is queued")
+    p.set_defaults(fn=cmd_worker)
+
     p = sub.add_parser("push-local", help="copy local episodes into the database (DATABASE_URL)")
     p.set_defaults(fn=cmd_push_local)
 
     a = ap.parse_args()
     try:
         a.fn(a)
-    except (LLMError, FileNotFoundError, ValueError) as e:
+    except (LLMError, FileNotFoundError, ValueError, RuntimeError) as e:
         print(f"\n✗ {e}", file=sys.stderr)
         sys.exit(1)
 

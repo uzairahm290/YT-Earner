@@ -1,0 +1,65 @@
+name: Production worker
+
+# Picks up jobs queued from the dashboard (narration now; visuals and render later).
+# Runs every 10 minutes, and right away when the dashboard has GITHUB_DISPATCH_TOKEN set.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# One worker at a time, so two runs never grab the same episode.
+concurrency:
+  group: production-worker
+  cancel-in-progress: false
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      WIKI_USER_AGENT: ${{ secrets.WIKI_USER_AGENT }}
+    steps:
+      - name: Check the secret is set
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Add DATABASE_URL under Settings → Secrets and variables → Actions (same value as on Render)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Cheap check first: most runs find nothing and finish in under a minute.
+      - name: Anything queued?
+        id: queue
+        run: |
+          set +e
+          python cli.py worker --check
+          code=$?
+          set -e
+          if [ $code -eq 0 ]; then echo "work=yes" >> "$GITHUB_OUTPUT";
+          elif [ $code -eq 3 ]; then echo "work=no" >> "$GITHUB_OUTPUT";
+          else exit $code; fi
+
+      - name: Install the worker's tools
+        if: steps.queue.outputs.work == 'yes'
+        run: |
+          pip install -r requirements-worker.txt
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+
+      - name: Cache the voice model (~350 MB)
+        if: steps.queue.outputs.work == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kokoro
+          key: kokoro-model-v1.0
+
+      - name: Run queued jobs
+        if: steps.queue.outputs.work == 'yes'
+        run: python cli.py worker
