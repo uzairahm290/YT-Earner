@@ -109,6 +109,15 @@ Without this, a queued narration starts within ~15 minutes. With it, it starts i
 GitHub pauses scheduled workflows in repos with no commits for 60 days. If narration stops
 getting picked up after a quiet stretch, open Actions and re-enable the workflow.
 
+## 5. Optional: stock footage for B-roll
+
+Without a key, B-roll beats ("factory floor at night") use Wikimedia Commons photos. With one, they get real
+stock video. Both are free:
+- **Pexels**: pexels.com/api → sign up → copy the key → add `PEXELS_API_KEY` on Render
+- **Pixabay** (backup source): pixabay.com/api/docs → your key is on that page when logged in → `PIXABAY_API_KEY`
+
+Then hit **Search again** on a story's Pictures tab.
+
 ## When something's off
 
 | Symptom | Likely cause |

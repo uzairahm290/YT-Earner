@@ -6,7 +6,7 @@ That human step is what keeps the channel on the right side of YouTube's inauthe
 
 ```
 topics ─► research ─► script ─► voice ─► visuals ─► render ─► shorts ─► upload
-  ✅         ✅          ✅        ✅       next      next      next      next
+  ✅         ✅          ✅        ✅        ✅       next      next      next
 ```
 
 ## The dashboard
@@ -24,6 +24,7 @@ Everything runs from the Production Desk:
 - **Fact sheet**: timeline, people, numbers with their sources, a checklist of claims to confirm, and a place to correct anything wrong.
 - **Script**: a two-column picture/narration paper edit. Running timecodes, shot type and search for each beat, lower thirds, pauses. AI phrases get marked in red as you type; numbers that aren't in the fact sheet get marked on save. Approve is locked until it's clean.
 - **Narration**: approving a script queues it for the narrator (Kokoro-82M, 7 voices to pick from). When it's done, every beat gets a play button and the script follows along as it plays. Edit the script and the recording is marked out of date.
+- **Pictures**: a real picture for every beat. Photos from Wikimedia Commons (freely licensed only, credited), stock footage from Pexels/Pixabay when a key is set, and clean cards for figures and titles. Documents get a card flagged for you to upload a screenshot of the real thing. Pick alternates, search again in your own words, or upload your own. Credits are collected for the description.
 - **Shorts**: phone-shaped previews of each Short with its hook line.
 - **Title and thumbnail**: pick or write the title, thumbnail text and description.
 
@@ -39,6 +40,7 @@ To put it online behind a password (Render + Supabase, free), see **[DEPLOY.md](
 | Research | `python cli.py research "Nokia" --extra "Stephen Elop"` | `factsheet.md`: timeline, people, numbers, every fact tagged with its source, plus a ⚠️ verify list |
 | Script | `python cli.py script nokia --angle "..." --notes "..."` | `script.md` to read and edit, `script.json` for the next stages |
 | Voice | `python cli.py voice nokia --voice am_onyx` | one mastered MP3 (-16 LUFS) + start/end time of every beat |
+| Pictures | dashboard → Pictures tab | `visuals.json`: candidates, your pick and the credit for every beat (files download at render time) |
 | Worker | `python cli.py worker` | runs whatever the dashboard queued; this is what GitHub Actions calls |
 
 The script is broken into **beats**: one beat = 1–3 sentences of narration plus the exact shot to cut to
@@ -74,6 +76,7 @@ pipeline/
   script.py          fact sheet → beats + visuals + Shorts picks, with lint
   llm.py             any OpenAI-compatible endpoint (Gemini / Groq / local)
   voice.py           script → Kokoro narration → FFmpeg mastering → MP3 + beat timings
+  visuals.py         beat → Commons photos / Pexels+Pixabay video / cards, licenses and credits
   worker.py          job queue: claims queued episodes, runs them, records errors
   episode.py         per-video files + status
   store.py           where files live: episodes/ folder locally, Supabase when DATABASE_URL is set
