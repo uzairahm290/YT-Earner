@@ -114,6 +114,7 @@ illustrate:
   width: 1344                # SDXL's native 16:9-ish size; scaled to 1080p at render
   height: 768
   kernel_slug: docu-illustrate
+  accelerator: NvidiaTeslaT4  # ask for a T4: current Kaggle PyTorch no longer runs on the older P100
   # One house style, so the AI frames look like a deliberate illustration series, never like photos.
   style: >-
     editorial ink illustration, bold confident linework, limited duotone palette of deep navy

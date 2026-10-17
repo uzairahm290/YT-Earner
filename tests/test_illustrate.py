@@ -43,6 +43,7 @@ class Rule(unittest.TestCase):
             self.assertEqual(kid, "someone/docu-illustrate")
             meta = json.loads((Path(d) / "kernel-metadata.json").read_text())
             self.assertTrue(meta["enable_gpu"] and meta["is_private"] and meta["enable_internet"])
+            self.assertEqual(meta["machine_shape"], "NvidiaTeslaT4")
             code = (Path(d) / "illustrate.py").read_text()
             compile(code, "illustrate.py", "exec")
             # Read JOB the same way the notebook does: evaluate that one assignment.
@@ -51,6 +52,14 @@ class Rule(unittest.TestCase):
             assign = next(n for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "JOB")
             job = json.loads(ast.literal_eval(assign.value.args[0]))
             self.assertEqual(job["items"][0]["prompt"], items[0]["prompt"])
+
+    def test_kaggle_log_tail_is_readable(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = [{"stream_name": "stdout", "data": "GPU: Tesla P100\n"},
+                   {"stream_name": "stderr", "data": "RuntimeError: no kernel image is available\n"}]
+            (Path(d) / "docu-illustrate.log").write_text(json.dumps(log))
+            tail = illustrate._log_tail(Path(d))
+        self.assertTrue(tail.endswith("no kernel image is available"))
 
     def test_missing_kaggle_secrets_give_a_clear_error(self):
         with mock.patch.dict(os.environ, {"DOCU_MOCK_ILLUSTRATE": "", "KAGGLE_USERNAME": "", "KAGGLE_API_TOKEN": ""}):
