@@ -21,3 +21,7 @@ services:
         sync: false
       - key: WIKI_USER_AGENT
         sync: false
+      # Lets the dashboard wake the GitHub Actions worker right away instead of waiting
+      # for its 10-minute schedule. Optional: add GITHUB_DISPATCH_TOKEN in Render to turn it on.
+      - key: GITHUB_REPO
+        value: uzairahm290/YT-Earner

@@ -19,18 +19,26 @@ import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+
+import requests
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import research, script, topics
+from pipeline import research, script, topics, voice
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
 
 DEMO = os.getenv("DOCU_MOCK_LLM") == "1"
+# Heavy stages normally run on the GitHub Actions worker. Locally (or in demo mode) the
+# dashboard can run them itself: set INLINE_WORKER=1, with requirements-worker.txt installed.
+INLINE_WORKER = DEMO or os.getenv("INLINE_WORKER") == "1"
+if DEMO:
+    os.environ.setdefault("DOCU_MOCK_TTS", "1")
 
 # The full flow, in order. `built: False` stages show in the UI as coming next.
 STAGES = [
@@ -38,7 +46,7 @@ STAGES = [
     {"key": "verify", "label": "Verify facts", "status": "verified", "built": True},
     {"key": "script", "label": "Script", "status": "scripted", "built": True},
     {"key": "approve", "label": "Approve script", "status": "approved", "built": True},
-    {"key": "voice", "label": "Voice", "status": "voiced", "built": False},
+    {"key": "voice", "label": "Voice", "status": "voiced", "built": True},
     {"key": "visuals", "label": "Visuals", "status": "visuals_ready", "built": False},
     {"key": "render", "label": "Render", "status": "rendered", "built": False},
     {"key": "shorts", "label": "Shorts", "status": "shorts_ready", "built": False},
@@ -185,6 +193,9 @@ def status():
         "stages": STAGES,
         "script_cfg": cfg["script"],
         "banned_phrases": cfg["banned_phrases"],
+        "voices": voice.voice_choices(),
+        "voice_default": cfg["voice"]["default"],
+        "worker": "inline" if INLINE_WORKER else ("instant" if _dispatch_ready() else "every 10 minutes"),
     }
 
 
@@ -223,6 +234,7 @@ def summarize(ep: Episode, files: dict | None = None) -> dict:
         "verify_total": len(verify),
         "verify_done": len(meta.get("verify_checked", [])),
         "est_minutes": lint.get("est_minutes") if lint else None,
+        "voice_state": (meta.get("voice") or {}).get("state"),
         "running": any(j["slug"] == ep.slug and j["status"] == "running" for j in _jobs.values()),
     }
 
@@ -236,11 +248,17 @@ def list_episodes():
 @app.get("/api/episodes/{slug}")
 def get_episode(slug: str):
     ep = _load(slug)
+    sc = ep.read("script.json")
+    timings = ep.read("voice/timings.json")
+    if timings and sc:
+        # The narration was recorded from an older version of the script.
+        timings["stale"] = timings.get("script_hash") != voice.script_hash(sc)
     return {**summarize(ep),
             "meta": ep.read("meta.json"),
             "factsheet": ep.read("factsheet.json"),
-            "script": ep.read("script.json"),
-            "lint": ep.read("lint.json")}
+            "script": sc,
+            "lint": ep.read("lint.json"),
+            "voice": timings}
 
 
 class NewEpisode(BaseModel):
@@ -335,14 +353,20 @@ def save_script(slug: str, data: dict):
         first = e.errors()[0]
         where = " → ".join(str(p) for p in first["loc"])
         raise HTTPException(422, f"{where}: {first['msg']}")
-    # Any edit after approval sends it back for another look.
-    if ep.read("meta.json")["status"] == "approved":
+    # Any edit after approval sends it back for another look (and a new narration).
+    if ep.read("meta.json")["status"] in ("approved", "voiced"):
         ep.set_status("scripted")
     return get_episode(slug)
 
 
+class ApproveBody(BaseModel):
+    voice: str | None = None
+    narrate: bool = True
+
+
 @app.post("/api/episodes/{slug}/approve")
-def approve(slug: str):
+def approve(slug: str, body: ApproveBody | None = None):
+    body = body or ApproveBody()
     ep = _load(slug)
     lint = ep.read("lint.json")
     if not lint:
@@ -350,15 +374,100 @@ def approve(slug: str):
     if not lint["ok"]:
         raise HTTPException(409, "Fix the flagged phrases and unbacked numbers before approving.")
     ep.set_status("approved")
+    if body.narrate:
+        _queue_voice(ep, body.voice)
     return get_episode(slug)
 
 
 @app.post("/api/episodes/{slug}/unapprove")
 def unapprove(slug: str):
     ep = _load(slug)
-    if ep.read("meta.json")["status"] == "approved":
+    meta = ep.read("meta.json")
+    if (meta.get("voice") or {}).get("state") in ("queued",):
+        meta["voice"]["state"] = "cancelled"
+        ep.write("meta.json", meta)
+    if meta["status"] in ("approved", "voiced"):
         ep.set_status("scripted")
     return get_episode(slug)
+
+
+# ──────────────────────────── voice ────────────────────────────
+
+class VoiceBody(BaseModel):
+    voice: str | None = None
+
+
+@app.post("/api/episodes/{slug}/voice")
+def request_voice(slug: str, body: VoiceBody):
+    ep = _load(slug)
+    if ep.read("meta.json")["status"] not in ("approved", "voiced"):
+        raise HTTPException(409, "Approve the script first. Narration is recorded from the approved version.")
+    if ep.read("meta.json")["status"] == "voiced":
+        ep.set_status("approved")
+    _queue_voice(ep, body.voice)
+    return get_episode(slug)
+
+
+@app.post("/api/episodes/{slug}/voice/cancel")
+def cancel_voice(slug: str):
+    ep = _load(slug)
+    meta = ep.read("meta.json")
+    job = meta.get("voice") or {}
+    if job.get("state") == "running":
+        raise HTTPException(409, "The narrator already started. It'll finish in a few minutes.")
+    if job.get("state") in ("queued", "error"):
+        job["state"] = "cancelled"
+        ep.write("meta.json", meta)
+    return get_episode(slug)
+
+
+@app.get("/api/episodes/{slug}/audio")
+def narration_audio(slug: str):
+    ep = _load(slug)
+    mp3 = voice.load_mp3(ep)
+    if not mp3:
+        raise HTTPException(404, "No narration recorded yet.")
+    return Response(mp3, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=300"})
+
+
+def _queue_voice(ep: Episode, voice_id: str | None) -> None:
+    voice_id = voice_id or load_config()["voice"]["default"]
+    if voice_id not in voice.voice_choices():
+        raise HTTPException(422, f"Unknown voice '{voice_id}'.")
+    meta = ep.read("meta.json")
+    if (meta.get("voice") or {}).get("state") == "running":
+        raise HTTPException(409, "A narration is already being recorded for this story.")
+    meta["voice"] = {"state": "queued", "voice": voice_id,
+                     "requested_at": datetime.now(timezone.utc).isoformat()}
+    ep.write("meta.json", meta)
+    if INLINE_WORKER:
+        from pipeline import worker
+        start_job("voice", f"Narrating {meta['topic']}", lambda: worker.run_voice_jobs(), slug=ep.slug)
+    else:
+        _dispatch_worker()
+
+
+def _dispatch_ready() -> bool:
+    return bool(env("GITHUB_DISPATCH_TOKEN") and env("GITHUB_REPO"))
+
+
+def _dispatch_worker() -> None:
+    """Wake the GitHub Actions worker now instead of waiting for its 10-minute schedule."""
+    if not _dispatch_ready():
+        return
+
+    def go():
+        try:
+            r = requests.post(
+                f"https://api.github.com/repos/{env('GITHUB_REPO')}/actions/workflows/produce.yml/dispatches",
+                headers={"Authorization": f"Bearer {env('GITHUB_DISPATCH_TOKEN')}",
+                         "Accept": "application/vnd.github+json"},
+                json={"ref": "main"}, timeout=15)
+            if r.status_code >= 300:
+                print(f"  ! couldn't wake the worker ({r.status_code}): {r.text[:200]}")
+        except requests.RequestException as e:
+            print(f"  ! couldn't wake the worker: {e}")
+    threading.Thread(target=go, daemon=True).start()
 
 
 @app.delete("/api/episodes/{slug}")
