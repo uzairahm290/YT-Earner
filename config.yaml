@@ -75,6 +75,25 @@ script:
   max_chapters: 7
   shorts_per_video: 6       # Shorts the script should flag for the cutter
 
+# Narration. Kokoro-82M (Apache 2.0, fine for monetized videos), runs on CPU.
+voice:
+  default: am_michael        # warm, measured American male
+  # Voices offered in the dashboard. a = American, b = British; m = male, f = female.
+  choices:
+    am_michael: "Michael (US, warm)"
+    am_fenrir: "Fenrir (US, deeper)"
+    am_onyx: "Onyx (US, low and calm)"
+    am_eric: "Eric (US, brighter)"
+    af_heart: "Heart (US, female)"
+    af_nicole: "Nicole (US, female, soft)"
+    bm_george: "George (UK, classic doc)"
+  speed: 0.95                # slightly slower than default reads as "documentary"
+  lead_in: 0.6               # seconds of room before the first word
+  tail: 1.5                  # seconds after the last word
+  mp3_bitrate: 64k           # mono speech; plenty for previews, re-rendered at full quality later
+  model_dir: ~/.cache/kokoro
+  model_url: https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
+
 # Phrases that scream "AI wrote this". Script lint fails if any show up.
 banned_phrases:
   - "in today's fast-paced world"
