@@ -20,23 +20,32 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       WIKI_USER_AGENT: ${{ secrets.WIKI_USER_AGENT }}
     steps:
+      # Without the secret there's nothing to read from. Skip quietly instead of failing
+      # every 10 minutes (each failed run would send you an email).
       - name: Check the secret is set
+        id: setup
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "::error::Add DATABASE_URL under Settings → Secrets and variables → Actions (same value as on Render)."
-            exit 1
+            echo "::warning::Add DATABASE_URL under Settings → Secrets and variables → Actions (same value as on Render). Skipping until then."
+            echo "ready=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=yes" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/checkout@v4
+        if: steps.setup.outputs.ready == 'yes'
       - uses: actions/setup-python@v5
+        if: steps.setup.outputs.ready == 'yes'
         with:
           python-version: "3.12"
           cache: pip
 
       - run: pip install -r requirements.txt
+        if: steps.setup.outputs.ready == 'yes'
 
       # Cheap check first: most runs find nothing and finish in under a minute.
       - name: Anything queued?
+        if: steps.setup.outputs.ready == 'yes'
         id: queue
         run: |
           set +e
