@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import illustrate, research, script, shorts, topics, visuals, voice, youtube
+from pipeline import audio, illustrate, research, script, shorts, topics, visuals, voice, youtube
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -205,6 +205,8 @@ def status():
         "preview_seconds": cfg["render"]["preview_seconds"],
         "worker": "inline" if INLINE_WORKER else ("instant" if _dispatch_ready() else "every 10 minutes"),
         "youtube": youtube.public_account(),
+        "music": audio.library(),
+        "music_default": audio.cfg()["default"],
     }
 
 
@@ -719,6 +721,78 @@ def short_preview(slug: str, short_id: str):
     if not data:
         raise HTTPException(404, "No preview yet.")
     return Response(data, media_type="video/mp4", headers={"Cache-Control": "private, max-age=60"})
+
+
+# ──────────────────────────── music ────────────────────────────
+
+class MusicUpload(BaseModel):
+    data_url: str
+    name: str
+    credit: str = ""
+
+
+@app.get("/api/music")
+def music_list():
+    return audio.library()
+
+
+@app.post("/api/music")
+def music_add(body: MusicUpload):
+    m = re.match(r"data:audio/(?:mpeg|mp3);base64,(.+)", body.data_url or "", re.S)
+    if not m:
+        raise HTTPException(422, "Upload an MP3 file.")
+    import base64 as b64
+    try:
+        return audio.add_track(body.name, body.credit, b64.b64decode(m.group(1)))
+    except audio.AudioError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/api/music/{track_id}")
+def music_remove(track_id: str):
+    audio.remove_track(track_id)
+    return audio.library()
+
+
+@app.get("/api/music/{track_id}/preview")
+def music_preview(track_id: str):
+    """20 seconds to listen to before picking."""
+    import base64 as b64
+    import io
+    import wave as wav
+    kind, _, key = track_id.partition(":")
+    if kind == "upload":
+        data = get_store().read(audio.SETTINGS, f"music/{key}.mp3.b64")
+        if not data:
+            raise HTTPException(404, "No such track.")
+        return Response(b64.b64decode(data), media_type="audio/mpeg")
+    if kind != "builtin" or key not in audio.PROGRESSIONS:
+        raise HTTPException(404, "No such track.")
+    import numpy as np
+    x = audio.synth_loop(key)[:, : 20 * audio.SR].mean(axis=0)[::2]  # mono, 24 kHz, 20 s
+    x *= np.minimum(1, np.linspace(20, 0, len(x)))  # fade the last second
+    buf = io.BytesIO()
+    with wav.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(audio.SR // 2)
+        w.writeframes((np.clip(x * 2.5, -1, 1) * 32767).astype("<i2").tobytes())
+    return Response(buf.getvalue(), media_type="audio/wav", headers={"Cache-Control": "private, max-age=86400"})
+
+
+class MusicPick(BaseModel):
+    track: str
+
+
+@app.post("/api/episodes/{slug}/music")
+def music_pick(slug: str, body: MusicPick):
+    ep = _load(slug)
+    if body.track != "none" and body.track not in {t["id"] for t in audio.library()}:
+        raise HTTPException(422, "Unknown music track.")
+    meta = ep.read("meta.json")
+    meta["music"] = {"track": body.track}
+    ep.write("meta.json", meta)
+    return get_episode(slug)
 
 
 # ──────────────────────────── YouTube ────────────────────────────

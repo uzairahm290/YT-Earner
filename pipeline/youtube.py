@@ -193,6 +193,10 @@ def package(ep: Episode) -> dict:
         parts.append("Chapters\n" + "\n".join(marks))
     if cred:
         parts.append("Pictures\n" + "\n".join(cred))
+    from . import audio
+    music_credit = audio.credit_for((meta.get("render") or {}).get("music"))
+    if music_credit:
+        parts.append("Music\n" + music_credit)
     notes = ["Narrated with a synthetic voice (Kokoro)."]
     if photo_used:
         notes.append("Some general scenes (places and objects, never people or real events) are AI-generated images; "
@@ -218,6 +222,9 @@ def package(ep: Episode) -> dict:
         lines.append(f"Full story: {long_url}" if long_url else f"Full story: “{title}” on this channel.")
         short_photo = any(picks.get(ln["beat"], {}).get("source") == "ai" and picks.get(ln["beat"], {}).get("style") == "photo"
                           for ln in it["lines"])
+        credit = audio.credit_for(made[it["id"]].get("music"))
+        if credit:
+            lines.append("Music: " + credit)
         if short_photo:
             lines.append("Includes AI-generated scenes (places and objects only).")
         out_shorts[it["id"]] = {"title": s_title, "description": "\n\n".join(lines), "synthetic": short_photo,

@@ -700,3 +700,6 @@ a.btn-primary { color: var(--cue-ink); }
 .v-style:has(input:checked) { border-color: var(--cue); box-shadow: inset 0 0 0 1px var(--cue); }
 .v-style input { margin-top: 3px; }
 .yt-synth { margin: 0 0 10px; padding: 7px 10px; background: var(--marker-wash); border-radius: var(--r-sm); }
+.music-pick { display: inline-flex; align-items: center; gap: 4px; }
+.music-pick select { font: 14px/1.2 var(--sans); padding: 8px 10px; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); max-width: 220px; }
+.music-play { min-width: 38px; }

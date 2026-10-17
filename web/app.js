@@ -505,8 +505,8 @@ function nextStep(ep, running, flags) {
           `<button class="btn btn-primary" data-act="render">Try again</button>
            <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
       }
-      return box(`<strong>Narration and pictures approved.</strong> Cut them into the finished video: Ken Burns moves on the photos, lower thirds, one grade, captions.`,
-        `<button class="btn btn-primary" data-act="render">Render the video</button>
+      return box(`<strong>Narration and pictures approved.</strong> Cut them into the finished video: camera moves with depth on the photos, dissolves, chapter titles, lower thirds, music under the voice, captions.`,
+        `${musicPick()}<button class="btn btn-primary" data-act="render">Render the video</button>
          ${state.tab !== "shorts" ? `<button class="btn" data-tab="shorts">Make Shorts</button>` : ""}
          <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
     }
@@ -524,6 +524,22 @@ function nextStep(ep, running, flags) {
   }
   function box(text, actions = "") { return `<div class="next-step"><p>${text}</p>${actions}</div>`; }
 }
+
+function musicPick() {
+  const cur = state.ep?.meta?.music?.track || state.status.music_default;
+  const opts = [...(state.status.music || []), { id: "none", name: "No music" }];
+  return `<span class="music-pick">
+    <label><span class="sr-only">Music</span>
+    <select data-act-change="pick-music" aria-label="Music">
+      ${opts.map((t) => `<option value="${esc(t.id)}" ${t.id === cur ? "selected" : ""}>♪ ${esc(t.name)}</option>`).join("")}
+      <option value="__add">＋ Add your own track…</option>
+    </select></label>
+    ${cur !== "none" ? `<button class="btn btn-quiet music-play" data-act="play-music" data-track="${esc(cur)}" aria-label="Listen to this music" title="Listen">▶</button>` : ""}
+    <input type="file" accept="audio/mpeg,.mp3" hidden id="musicFile">
+  </span>`;
+}
+
+let musicAudio = null;
 
 function voiceName(id) { return (state.status.voices || {})[id] || id || "the default voice"; }
 
@@ -1069,6 +1085,7 @@ function shortsDesk() {
         <input type="text" id="shortLabel" value="${esc(d.label)}" maxlength="60">
       </label>
       <div class="sd-actions">
+        ${musicPick()}
         ${state.sdirty ? `<button class="btn" data-act="save-shorts">Save edits</button>` : ""}
         <button class="btn btn-quiet" data-act="reset-shorts" title="Go back to the script's flagged moments">Start over from the script</button>
         ${busy ? `<button class="btn" data-act="cancel-shorts" ${job.state === "running" ? "disabled" : ""}>${job.state === "running" ? "Making…" : "Cancel"}</button>`
@@ -1103,7 +1120,7 @@ function shortsDesk() {
                 <button class="sd-x" data-act="drop-line" aria-label="Remove this line" title="Remove this line">×</button>
               </li>`).join("")}
             </ol>
-            <label class="sd-k">Closing line</label>
+            <label class="sd-k">Closing line <small>tip: end on a line that leads back into the hook, so the Short loops</small></label>
             <textarea class="autosize" rows="1" data-sf="outro">${esc(it.outro)}</textarea>
             ${it.why ? `<p class="why">Why this works: ${esc(it.why)}</p>` : ""}
             ${m ? `<div class="sd-dl">${downloadLink({ run_id: m.run_id, repo: m.repo, file: m.file }, "btn btn-quiet").replace("Download full video", "Download this Short")}</div>` : ""}
@@ -1486,6 +1503,13 @@ document.addEventListener("click", async (e) => {
         lastWorkerCheck = 0;
         toast("Queued to upload"); renderEpisode(); break;
       }
+      case "play-music": {
+        if (musicAudio && !musicAudio.paused) { musicAudio.pause(); btn.textContent = "▶"; break; }
+        musicAudio = new Audio(`/api/music/${encodeURIComponent(btn.dataset.track)}/preview`);
+        musicAudio.onended = () => (btn.textContent = "▶");
+        await musicAudio.play();
+        btn.textContent = "❚❚"; break;
+      }
       case "save-shorts": await saveShorts(); toast("Shorts saved"); renderEpisode(); break;
       case "reset-shorts": {
         if (!confirm("Throw away your edits to the Shorts and start again from the script?")) break;
@@ -1646,6 +1670,36 @@ async function saveShorts() {
 
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
 function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch { /* private mode */ } }
+
+// Music: pick per story, or add your own MP3 (with its credit line for the description).
+document.addEventListener("change", async (e) => {
+  const sel = e.target.closest('[data-act-change="pick-music"]');
+  if (!sel) return;
+  const slug = encodeURIComponent(state.ep.slug);
+  try {
+    if (sel.value === "__add") {
+      const input = $("#musicFile");
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        const name = prompt("Name for this track:", file.name.replace(/\.mp3$/i, "")) || file.name;
+        const credit = prompt("Credit line for the description (what the license asks for, e.g. 'Music: Song by Artist, CC BY 4.0'):", "") || "";
+        const data_url = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result.replace(/^data:[^;]*;/, "data:audio/mpeg;")); r.onerror = bad; r.readAsDataURL(file); });
+        const track = await api("/api/music", { method: "POST", body: { data_url, name, credit } });
+        state.status.music = await api("/api/music");
+        state.ep = await api(`/api/episodes/${slug}/music`, { method: "POST", body: { track: track.id } });
+        toast(`Added ${track.name}`); renderEpisode();
+      };
+      input.click();
+      sel.value = state.ep.meta?.music?.track || state.status.music_default;
+      return;
+    }
+    if (musicAudio) musicAudio.pause();
+    state.ep = await api(`/api/episodes/${slug}/music`, { method: "POST", body: { track: sel.value } });
+    toast(sel.value === "none" ? "No music on this story" : "Music set for this story");
+    renderEpisode();
+  } catch (err) { toast(err.message, true); }
+});
 
 // One picture at a time: the ✦ form on a beat in the Pictures tab.
 document.addEventListener("submit", async (e) => {

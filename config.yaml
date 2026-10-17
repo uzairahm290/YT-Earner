@@ -147,6 +147,18 @@ render:
   lower_third_seconds: 4.5   # how long a name/date caption stays up
   grain: 5                   # film grain strength, 0 to turn off
   preview_seconds: 60        # small preview stored for the dashboard
+  max_shot_seconds: 7        # a beat longer than this is split across its other pictures / camera moves
+  crossfade: 0.4             # seconds of dissolve between shots inside a chapter (0 = hard cuts)
+  parallax: true             # 2.5D camera moves on photos using a depth model (falls back to Ken Burns)
+  depth_model: depth-anything/Depth-Anything-V2-Small-hf   # Apache 2.0, runs on CPU
+  parallax_amount: 1.0       # 1.0 = subtle; above 1.5 edges start to smear
+
+# Music and sound effects under the narration (pipeline/audio.py).
+audio:
+  default: builtin:calm      # builtin:calm | builtin:tension | builtin:uplift | none | upload:<id>
+  music_db: -6               # music level before ducking: ~22 dB under the voice while it talks, rises in pauses
+  whoosh_db: -16             # into each chapter
+  hit_db: -14                # when a big number lands
 
 # Vertical Shorts, cut from the moments the script flags.
 shorts:
