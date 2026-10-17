@@ -325,6 +325,18 @@ def upload_captions(video_id: str, srt: str, token: str) -> None:
         raise YouTubeError("Video uploaded, but the captions weren't: " + _explain(r))
 
 
+def upload_thumbnail(video_id: str, jpg: bytes, token: str) -> None:
+    if mock():
+        return
+    r = requests.post(f"{UPLOAD_API}/thumbnails/set", params={"videoId": video_id},
+                      headers={"Authorization": f"Bearer {token}", "Content-Type": "image/jpeg"}, data=jpg, timeout=120)
+    if r.status_code == 403:
+        raise YouTubeError("Custom thumbnails need a verified channel: verify it at youtube.com/verify, "
+                           "then set this one in YouTube Studio (download it from the YouTube tab).")
+    if r.status_code not in (200, 201):
+        raise YouTubeError("Thumbnail not set: " + _explain(r))
+
+
 def _explain(r: requests.Response) -> str:
     try:
         err = r.json().get("error", {})
@@ -376,7 +388,17 @@ def run(slug: str, targets: list[dict], progress=None) -> dict:
                     captions = True
                 except YouTubeError as e:
                     captions = str(e)
-            results[what] = {"state": "done", "video_id": vid, "url": f"https://youtu.be/{vid}",
+            thumb = None
+            if what == "long":
+                from . import thumbnail
+                jpg = thumbnail.chosen_bytes(ep)
+                if jpg:
+                    try:
+                        upload_thumbnail(vid, jpg, token)
+                        thumb = True
+                    except YouTubeError as e:
+                        thumb = str(e)
+            results[what] = {"state": "done", "video_id": vid, "url": f"https://youtu.be/{vid}", "thumbnail": thumb,
                              "privacy": t.get("privacy", "private"), "publish_at": t.get("publish_at"),
                              "captions": captions, "title": info["title"],
                              "uploaded_at": datetime.now(timezone.utc).isoformat()}

@@ -703,3 +703,17 @@ a.btn-primary { color: var(--cue-ink); }
 .music-pick { display: inline-flex; align-items: center; gap: 4px; }
 .music-pick select { font: 14px/1.2 var(--sans); padding: 8px 10px; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); max-width: 220px; }
 .music-play { min-width: 38px; }
+
+/* ───── thumbnails ───── */
+.thumb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.thumb-opt { position: relative; display: block; cursor: pointer; border-radius: var(--r-md); overflow: hidden; outline: 2px solid transparent; outline-offset: 2px; }
+.thumb-opt img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--rule); }
+.thumb-opt input { position: absolute; opacity: 0; }
+.thumb-opt.on { outline-color: var(--cue); }
+.thumb-opt.on::after { content: "✓ Picked"; position: absolute; right: 8px; bottom: 8px; padding: 3px 8px; font: 700 12px/1.2 var(--sans); color: var(--cue-ink); background: var(--cue); border-radius: var(--r-sm); }
+.thumb-opt:focus-within { outline-color: var(--marker); }
+.thumb-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+.thumb-make { margin: 4px 0 22px; }
+.thumb-k { margin: 6px 0 10px; font-size: 15px; }
+.thumb-k small { font-weight: 400; color: var(--faint); margin-left: 6px; }
+.yt-thumb { display: block; width: min(360px, 100%); aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--r-sm); margin-bottom: 6px; }

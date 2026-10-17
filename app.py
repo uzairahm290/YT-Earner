@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import audio, illustrate, research, script, shorts, topics, visuals, voice, youtube
+from pipeline import audio, illustrate, research, script, shorts, thumbnail, topics, visuals, voice, youtube
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -721,6 +721,49 @@ def short_preview(slug: str, short_id: str):
     if not data:
         raise HTTPException(404, "No preview yet.")
     return Response(data, media_type="video/mp4", headers={"Cache-Control": "private, max-age=60"})
+
+
+# ──────────────────────────── thumbnails ────────────────────────────
+
+class ThumbBody(BaseModel):
+    text: str | None = None
+
+
+@app.post("/api/episodes/{slug}/thumbnails")
+def make_thumbnails(slug: str, body: ThumbBody):
+    _load(slug)
+    try:
+        thumbnail.make(slug, body.text)
+    except thumbnail.ThumbnailError as e:
+        raise HTTPException(409, str(e))
+    return get_episode(slug)
+
+
+class ThumbChoice(BaseModel):
+    id: str
+
+
+@app.post("/api/episodes/{slug}/thumbnails/choose")
+def choose_thumbnail(slug: str, body: ThumbChoice):
+    ep = _load(slug)
+    meta = ep.read("meta.json")
+    t = meta.get("thumbnail") or {}
+    if body.id not in {o["id"] for o in t.get("options", [])}:
+        raise HTTPException(404, "No such thumbnail.")
+    t["chosen"] = body.id
+    ep.write("meta.json", meta)
+    return get_episode(slug)
+
+
+@app.get("/api/thumbnails/{slug}/{oid}.jpg")
+def thumbnail_image(slug: str, oid: str, download: int = 0):
+    data = thumbnail.load(_load(slug), oid)
+    if not data:
+        raise HTTPException(404, "No thumbnail.")
+    headers = {"Cache-Control": "private, max-age=60"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{slug}-thumbnail.jpg"'
+    return Response(data, media_type="image/jpeg", headers=headers)
 
 
 # ──────────────────────────── music ────────────────────────────

@@ -124,3 +124,26 @@ class Api(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Thumbnails(unittest.TestCase):
+    def setUp(self):
+        research.run("Test Thumbs", offline=True)
+        script.run("test-thumbs")
+        with mock.patch("pipeline.visuals.time.sleep"):
+            visuals.run("test-thumbs")
+        self.ep = Episode.load("test-thumbs")
+
+    def tearDown(self):
+        shutil.rmtree(EPISODES_DIR / "test-thumbs", ignore_errors=True)
+
+    def test_three_options_from_real_pictures_with_the_scripts_text(self):
+        from pipeline import thumbnail
+        t = thumbnail.make("test-thumbs")
+        self.assertEqual([o["layout"] for o in t["options"]], ["left", "bottom", "split"])
+        self.assertEqual(t["text"], self.ep.read("script.json")["thumbnail_text_options"][0])
+        jpg = thumbnail.chosen_bytes(self.ep)
+        from PIL import Image
+        import io
+        self.assertEqual(Image.open(io.BytesIO(jpg)).size, (1280, 720))
+        self.assertLess(len(jpg), 2 * 1024 * 1024)  # YouTube's limit

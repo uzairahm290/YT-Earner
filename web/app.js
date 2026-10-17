@@ -1156,7 +1156,7 @@ function youtubeTab() {
     const busy = ["queued", "running"].includes(u.state) && ["queued", "running"].includes(job.state);
     const src = what === "long" ? (ep.meta?.render || {}) : (ep.meta?.shorts?.made || {})[what] || {};
     const status = u.state === "done"
-      ? `<p class="yt-done">On YouTube: <a href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a> · ${esc(u.privacy)}${u.publish_at ? `, publishes ${esc(new Date(u.publish_at).toLocaleString())}` : ""}${u.captions === true ? " · captions added" : typeof u.captions === "string" ? ` · <span class="v-err">${esc(u.captions)}</span>` : ""}</p>`
+      ? `<p class="yt-done">On YouTube: <a href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a> · ${esc(u.privacy)}${u.publish_at ? `, publishes ${esc(new Date(u.publish_at).toLocaleString())}` : ""}${u.captions === true ? " · captions added" : typeof u.captions === "string" ? ` · <span class="v-err">${esc(u.captions)}</span>` : ""}${u.thumbnail === true ? " · thumbnail set" : typeof u.thumbnail === "string" ? ` · <span class="v-err">${esc(u.thumbnail)}</span>` : ""}</p>`
       : busy ? `<p class="v-note">${job.state === "running" ? `Uploading… ${job.progress || 0}%` : "Queued to upload."}</p>`
       : u.state === "error" ? `<p class="v-note v-err">Upload failed: ${esc(u.error || job.error || "")}</p>` : "";
     return `<article class="yt-item" data-what="${esc(what)}">
@@ -1165,6 +1165,8 @@ function youtubeTab() {
       <div class="yt-field"><span class="yt-k">Title <small>${info.title.length}/100</small></span><div class="yt-copyrow"><input type="text" readonly value="${esc(info.title)}"><button class="btn btn-quiet" data-act="yt-copy" data-copy="title">Copy</button></div></div>
       <div class="yt-field"><span class="yt-k">Description</span><textarea readonly class="autosize" rows="4">${esc(info.description)}</textarea><button class="btn btn-quiet yt-copy-under" data-act="yt-copy" data-copy="description">Copy description</button></div>
       <div class="yt-field"><span class="yt-k">Tags</span><div class="yt-copyrow"><input type="text" readonly value="${esc(info.tags.join(", "))}"><button class="btn btn-quiet" data-act="yt-copy" data-copy="tags">Copy</button></div></div>
+      ${what === "long" && ep.meta?.thumbnail ? `<div class="yt-field"><span class="yt-k">Thumbnail</span><img class="yt-thumb" src="/api/thumbnails/${encodeURIComponent(ep.slug)}/${ep.meta.thumbnail.chosen}.jpg?v=${encodeURIComponent(ep.meta.thumbnail.made_at || "")}" alt="The picked thumbnail"> <a class="btn btn-quiet" href="/api/thumbnails/${encodeURIComponent(ep.slug)}/${ep.meta.thumbnail.chosen}.jpg?download=1">Download</a></div>`
+        : what === "long" ? `<p class="hint">No thumbnail yet: make one on the Title and thumbnail tab.</p>` : ""}
       ${info.synthetic ? `<p class="hint yt-synth">Uses AI photo-style images, so it's marked as altered or synthetic content on YouTube (their rule for realistic AI imagery). Uploading by hand? Tick that box in YouTube Studio too.</p>` : ""}
       ${acct.connected && u.state !== "done" ? `<div class="yt-send">
         <label>Visibility <select class="yt-privacy">
@@ -1207,6 +1209,34 @@ function shortsTab() {
 
 // ───── title + thumbnail ─────
 
+function thumbOptions(text) {
+  const ep = state.ep;
+  const t = ep.meta?.thumbnail;
+  const slug = encodeURIComponent(ep.slug);
+  const stale = t && t.text !== (text || "").trim();
+  if (!ep.visuals) {
+    return `<div class="thumb-preview" aria-hidden="true"><span id="thumbPreview">${esc(text)}</span></div>
+      <p class="hint" style="margin-bottom:14px">Rough preview of the text. Real thumbnails are made from the story's pictures once you've picked them.</p>`;
+  }
+  if (!t) {
+    return `<div class="thumb-preview" aria-hidden="true"><span id="thumbPreview">${esc(text)}</span></div>
+      <p class="hint">Three options, each on one of the story's strongest pictures, in the channel's style.</p>
+      <button class="btn btn-primary thumb-make" data-act="make-thumbs">Make thumbnails</button>`;
+  }
+  const v = encodeURIComponent(t.made_at || "");
+  return `<div class="thumb-grid" role="radiogroup" aria-label="Pick a thumbnail">
+      ${t.options.map((o) => `<label class="thumb-opt ${o.id === t.chosen ? "on" : ""}">
+        <input type="radio" name="thumbPick" value="${o.id}" ${o.id === t.chosen ? "checked" : ""} data-act-change="pick-thumb">
+        <img src="/api/thumbnails/${slug}/${o.id}.jpg?v=${v}" alt="Thumbnail option ${o.id.slice(1)} (${o.layout} layout)" loading="lazy">
+      </label>`).join("")}
+    </div>
+    <div class="thumb-actions">
+      <button class="btn ${stale ? "btn-primary" : ""}" data-act="make-thumbs">${stale ? "Remake with the new text" : "Make again"}</button>
+      <a class="btn btn-quiet" href="/api/thumbnails/${slug}/${t.chosen}.jpg?download=1">Download the picked one</a>
+    </div>
+    <span id="thumbPreview" hidden></span>`;
+}
+
 function packageTab() {
   if (!state.draft) return `<div class="empty"><h2>Nothing to package yet</h2><p>Titles, thumbnail text and the description come with the script.</p></div>`;
   const d = state.draft;
@@ -1228,9 +1258,9 @@ function packageTab() {
       <div class="tags">${d.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
     </div>
     <div>
-      <h2 style="margin-bottom:12px">Thumbnail text</h2>
-      <div class="thumb-preview" aria-hidden="true"><span id="thumbPreview">${esc(thumb)}</span></div>
-      <p class="hint" style="margin-bottom:14px">Rough preview of the text only. The real thumbnail gets the strongest archive photo behind it.</p>
+      <h2 style="margin-bottom:12px">Thumbnail</h2>
+      ${thumbOptions(thumb)}
+      <h3 class="thumb-k">Thumbnail text <small>2–4 words; a number or the last word goes on the yellow chip</small></h3>
       <div class="pick-list">${choice("pickThumb", d.thumbnail_text_options, thumb)}
         <input type="text" id="ownThumb" placeholder="Or write your own (2–4 words)" value="${esc(d.thumbnail_text_options.includes(thumb) ? "" : thumb)}" maxlength="40">
       </div>
@@ -1510,6 +1540,12 @@ document.addEventListener("click", async (e) => {
         await musicAudio.play();
         btn.textContent = "❚❚"; break;
       }
+      case "make-thumbs": {
+        if (state.dirty) { toast("Save your edits first, so the thumbnail uses the new text.", true); break; }
+        btn.disabled = true; btn.textContent = "Making…";
+        state.ep = await api(`/api/episodes/${slug}/thumbnails`, { method: "POST", body: {} });
+        toast("Three thumbnails ready. Pick one."); renderEpisode(); break;
+      }
       case "save-shorts": await saveShorts(); toast("Shorts saved"); renderEpisode(); break;
       case "reset-shorts": {
         if (!confirm("Throw away your edits to the Shorts and start again from the script?")) break;
@@ -1670,6 +1706,15 @@ async function saveShorts() {
 
 function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
 function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch { /* private mode */ } }
+
+document.addEventListener("change", async (e) => {
+  const r = e.target.closest('[data-act-change="pick-thumb"]');
+  if (!r) return;
+  try {
+    state.ep = await api(`/api/episodes/${encodeURIComponent(state.ep.slug)}/thumbnails/choose`, { method: "POST", body: { id: r.value } });
+    $$(".thumb-opt").forEach((l) => l.classList.toggle("on", l.querySelector("input").checked));
+  } catch (err) { toast(err.message, true); }
+});
 
 // Music: pick per story, or add your own MP3 (with its credit line for the description).
 document.addEventListener("change", async (e) => {
