@@ -24,12 +24,13 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import env, load_config
 from .episode import Episode
 
-KAGGLE_TIMEOUT = 50 * 60  # seconds to wait for the notebook, queue time included
+KAGGLE_TIMEOUT = 40 * 60  # wait this long in one worker run; after that a later run collects
 
 
 class IllustrateError(RuntimeError):
@@ -144,16 +145,17 @@ except Exception as e:
 '''
 
 
-def build_kernel(folder: Path, items: list[dict], username: str) -> str:
+def build_kernel(folder: Path, items: list[dict], username: str, suffix: str = "") -> str:
     c = cfg()
     job = {"model": c["model"], "vae": c["vae"], "per_beat": c["per_beat"], "steps": c["steps"],
            "guidance": c["guidance"], "width": c["width"], "height": c["height"],
            "negative": c["negative"].strip(), "items": items}
     code = KERNEL_TEMPLATE.replace("__JOB__", json.dumps(job).replace('"""', r'\"\"\"'))
     (folder / "illustrate.py").write_text(code, encoding="utf-8")
-    kernel_id = f"{username}/{c['kernel_slug']}"
+    slug = c["kernel_slug"] + (f"-{re.sub(r'[^a-z0-9]+', '-', suffix.lower())[:30].strip('-')}" if suffix else "")
+    kernel_id = f"{username}/{slug}"
     (folder / "kernel-metadata.json").write_text(json.dumps({
-        "id": kernel_id, "title": c["kernel_slug"], "code_file": "illustrate.py",
+        "id": kernel_id, "title": slug, "code_file": "illustrate.py",
         "language": "python", "kernel_type": "script", "is_private": True,
         "enable_gpu": True, "enable_internet": True, "machine_shape": c.get("accelerator", "NvidiaTeslaT4"),
         "dataset_sources": [], "competition_sources": [], "kernel_sources": [], "model_sources": [],
@@ -161,20 +163,23 @@ def build_kernel(folder: Path, items: list[dict], username: str) -> str:
     return kernel_id
 
 
-def run_on_kaggle(items: list[dict], out_dir: Path) -> dict:
-    """Push the notebook, wait for it, download the images. Returns {beat_id: [image paths]}."""
-    if os.getenv("DOCU_MOCK_ILLUSTRATE") == "1":
-        return _demo_images(items, out_dir)
+def _api():
     username = env("KAGGLE_USERNAME")
     if not (username and env("KAGGLE_API_TOKEN")):
         raise IllustrateError("Kaggle isn't connected. Add KAGGLE_USERNAME and KAGGLE_API_TOKEN as "
                               "GitHub repository secrets (Settings → Secrets and variables → Actions).")
     from kaggle.api.kaggle_api_extended import KaggleApi  # installed on the worker only
-
     api = KaggleApi()
     api.authenticate()
+    return api, username
+
+
+def push(items: list[dict], slug: str) -> str:
+    """Send the notebook to Kaggle. Returns its id. One notebook per story, so two stories
+    drawing at once never overwrite each other's output."""
+    api, username = _api()
     with tempfile.TemporaryDirectory() as tmp:
-        kernel_id = build_kernel(Path(tmp), items, username)
+        kernel_id = build_kernel(Path(tmp), items, username, suffix=slug)
         print(f"  pushing {kernel_id} with {len(items)} beats on {cfg().get('accelerator', 'NvidiaTeslaT4')}")
         try:
             api.kernels_push(tmp)
@@ -185,22 +190,44 @@ def run_on_kaggle(items: list[dict], out_dir: Path) -> dict:
             meta.pop("machine_shape", None)
             meta_file.write_text(json.dumps(meta))
             api.kernels_push(tmp)
+    return kernel_id
 
-    deadline = time.time() + KAGGLE_TIMEOUT
-    status = failure = ""
+
+def status(kernel_id: str) -> tuple[str, str]:
+    """('queued' | 'running' | 'complete' | 'error', failure message)."""
+    api, _ = _api()
+    resp = api.kernels_status(kernel_id)
+    raw = str(getattr(resp, "status", resp)).lower()
+    for word in ("complete", "error", "cancel", "running", "queued"):
+        if word in raw:
+            return ("error" if word == "cancel" else word), (getattr(resp, "failure_message", "") or "")
+    return raw, ""
+
+
+def wait(kernel_id: str, seconds: float, on_status=None) -> tuple[str, str]:
+    """Poll until Kaggle finishes or `seconds` pass. Returns the last (state, failure)."""
+    deadline = time.time() + seconds
+    state, failure, last = "queued", "", None
     while time.time() < deadline:
         time.sleep(30)
-        resp = api.kernels_status(kernel_id)
-        status = str(getattr(resp, "status", resp)).lower()
-        print(f"  kaggle: {status}")
-        if "complete" in status:
+        try:
+            state, failure = status(kernel_id)
+        except Exception as e:  # a flaky status call isn't a failed notebook
+            print(f"  kaggle status check failed ({e}); trying again")
+            continue
+        if state != last:
+            print(f"  kaggle: {state}")
+            last = state
+            if on_status:
+                on_status(state)
+        if state in ("complete", "error"):
             break
-        if "error" in status or "cancel" in status:
-            failure = getattr(resp, "failure_message", "") or ""
-            break
-    else:
-        raise IllustrateError("Kaggle took longer than 50 minutes (GPU queue busy?). Try again later.")
+    return state, failure
 
+
+def collect(kernel_id: str, out_dir: Path, state: str, failure: str = "") -> dict:
+    """Download what the notebook made. Raises with Kaggle's own error when there's nothing."""
+    api, _ = _api()
     try:
         api.kernels_output(kernel_id, str(out_dir))
     except Exception as e:
@@ -211,7 +238,7 @@ def run_on_kaggle(items: list[dict], out_dir: Path) -> dict:
             for beat_id, names in (result.get("made") or {}).items()}
     made = {k: v for k, v in made.items() if v}
 
-    reason = result.get("error") or failure or (f"status {status}" if "complete" not in status else "")
+    reason = result.get("error") or failure or ("" if state == "complete" else f"status {state}")
     if not reason and not made:
         reason = "it finished but returned no images"
     if reason and not made:
@@ -281,6 +308,28 @@ def store(slug: str, images: dict[str, list[Path]], prompts: dict[str, str] | No
     return added
 
 
+def _set(slug: str, **fields) -> dict:
+    ep = Episode(slug)
+    meta = ep.read("meta.json")
+    meta["illustrate"] = {**(meta.get("illustrate") or {}), **fields}
+    ep.write("meta.json", meta)
+    return meta["illustrate"]
+
+
+def _finish(slug: str, kernel_id: str | None, state: str, failure: str, used: dict, started: float,
+            items: list[dict] | None = None) -> dict:
+    with tempfile.TemporaryDirectory() as tmp:
+        if os.getenv("DOCU_MOCK_ILLUSTRATE") == "1":
+            images = _demo_images(items or [{"id": b} for b in used], Path(tmp))
+        else:
+            images = collect(kernel_id, Path(tmp), state, failure)
+        added = store(slug, images, used)
+    job = _set(slug, state="done", added=added, kaggle_status="complete",
+               seconds_taken=round(time.time() - started))
+    print(f"  ✓ {added} illustrations added ({time.time() - started:.0f}s)")
+    return job
+
+
 def run(slug: str, beat_ids: list[str], prompts: dict[str, str] | None = None) -> dict:
     """prompts: {beat_id: your own wording} for beats you drew one at a time from the Pictures tab."""
     ep = Episode.load(slug)
@@ -308,12 +357,43 @@ def run(slug: str, beat_ids: list[str], prompts: dict[str, str] | None = None) -
         raise IllustrateError("None of those beats can be illustrated.")
     started = time.time()
     print(f"[illustrate] {ep.read('meta.json')['topic']}: {len(items)} beats")
-    with tempfile.TemporaryDirectory() as tmp:
-        images = run_on_kaggle(items, Path(tmp))
-        added = store(slug, images, used)
-    meta = ep.read("meta.json")
-    meta["illustrate"] = {**(meta.get("illustrate") or {}), "state": "done", "added": added,
-                          "seconds_taken": round(time.time() - started)}
-    ep.write("meta.json", meta)
-    print(f"  ✓ {added} illustrations added ({time.time() - started:.0f}s)")
-    return meta["illustrate"]
+    if os.getenv("DOCU_MOCK_ILLUSTRATE") == "1":
+        return _finish(slug, None, "complete", "", used, started, items)
+
+    kernel_id = push(items, slug)
+    _set(slug, kernel=kernel_id, pushed_at=datetime.now(timezone.utc).isoformat(), used=used,
+         kaggle_status="queued")
+    state, failure = wait(kernel_id, KAGGLE_TIMEOUT, on_status=lambda s: _set(slug, kaggle_status=s))
+    if state in ("complete", "error"):
+        return _finish(slug, kernel_id, state, failure, used, started)
+    # Kaggle's free GPU queue is slow today. Don't throw the work away: the next worker run
+    # picks the pictures up when the notebook finishes.
+    print(f"  Kaggle still {state} after {KAGGLE_TIMEOUT // 60} min; the next worker run collects the pictures")
+    return _set(slug, state="waiting", kaggle_status=state)
+
+
+def waiting() -> list[str]:
+    return [slug for slug, files in Episode.read_many(["meta.json"]).items()
+            if ((files.get("meta.json") or {}).get("illustrate") or {}).get("state") == "waiting"]
+
+
+def collect_waiting(max_wait: float = 15 * 60) -> tuple[int, int]:
+    """Worker: check on notebooks still drawing from an earlier run, store what finished."""
+    done = failed = 0
+    for slug in waiting():
+        job = (Episode(slug).read("meta.json") or {}).get("illustrate") or {}
+        kernel_id, used = job.get("kernel"), job.get("used") or {}
+        pushed = datetime.fromisoformat(job["pushed_at"]) if job.get("pushed_at") else datetime.now(timezone.utc)
+        age_h = (datetime.now(timezone.utc) - pushed).total_seconds() / 3600
+        print(f"[illustrate] checking on {kernel_id} ({age_h:.1f} h since it was sent)")
+        try:
+            state, failure = wait(kernel_id, max_wait, on_status=lambda s, slug=slug: _set(slug, kaggle_status=s))
+            if state in ("complete", "error"):
+                _finish(slug, kernel_id, state, failure, used, time.time())
+                done += 1
+            elif age_h > 6:
+                raise IllustrateError("Kaggle never got to it (6 hours in its queue). Try again later.")
+        except Exception as e:
+            _set(slug, state="error", error=str(e)[:500])
+            failed += 1
+    return done, failed

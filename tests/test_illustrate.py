@@ -64,7 +64,7 @@ class Rule(unittest.TestCase):
     def test_missing_kaggle_secrets_give_a_clear_error(self):
         with mock.patch.dict(os.environ, {"DOCU_MOCK_ILLUSTRATE": "", "KAGGLE_USERNAME": "", "KAGGLE_API_TOKEN": ""}):
             with self.assertRaises(illustrate.IllustrateError) as e:
-                illustrate.run_on_kaggle([{"id": "x", "prompt": "p", "seed": 1}], Path("."))
+                illustrate.push([{"id": "x", "prompt": "p", "seed": 1}], "some-story")
         self.assertIn("KAGGLE_API_TOKEN", str(e.exception))
 
 
@@ -121,6 +121,36 @@ class Flow(unittest.TestCase):
         real = next(b["id"] for b in m["beats"] if b["type"] == "archive_photo")
         with self.assertRaises(illustrate.IllustrateError):
             illustrate.run(SLUG, [real], {real: "Steve Jobs holding a phone"})
+
+    def test_slow_kaggle_leaves_the_job_waiting_and_a_later_run_collects_it(self):
+        m = self.ep.read("visuals.json")
+        todo = illustrate.candidates_for(m)[:1]
+        meta = self.ep.read("meta.json")
+        meta["illustrate"] = {"state": "queued", "beats": todo, "requested_at": "2026-01-01T00:00:00+00:00"}
+        self.ep.write("meta.json", meta)
+        sample = sorted((Path(__file__).parent.parent / "web" / "demo").glob("sample*.jpg"))[0]
+
+        def fake_collect(kernel_id, out_dir, state, failure=""):
+            dest = out_dir / f"{todo[0]}-0.jpg"
+            shutil.copy(sample, dest)
+            return {todo[0]: [dest]}
+
+        with mock.patch.dict(os.environ, {"DOCU_MOCK_ILLUSTRATE": ""}), \
+                mock.patch.object(illustrate, "push", return_value="me/docu-illustrate-x"), \
+                mock.patch.object(illustrate, "wait", return_value=("running", "")):
+            self.assertEqual(worker.main(), 0)
+        job = self.ep.read("meta.json")["illustrate"]
+        self.assertEqual((job["state"], job["kernel"]), ("waiting", "me/docu-illustrate-x"))
+        self.assertEqual(worker.main(check_only=True), 0)  # still counts as work for the next run
+
+        with mock.patch.dict(os.environ, {"DOCU_MOCK_ILLUSTRATE": ""}), \
+                mock.patch.object(illustrate, "wait", return_value=("complete", "")), \
+                mock.patch.object(illustrate, "collect", side_effect=fake_collect):
+            self.assertEqual(worker.main(), 0)
+        job = self.ep.read("meta.json")["illustrate"]
+        self.assertEqual((job["state"], job["added"]), ("done", 1))
+        b = next(b for b in self.ep.read("visuals.json")["beats"] if b["id"] == todo[0])
+        self.assertEqual(sum(c["source"] == "ai" for c in b["candidates"]), 1)
 
     def test_queue_cannot_smuggle_a_real_world_beat(self):
         m = self.ep.read("visuals.json")

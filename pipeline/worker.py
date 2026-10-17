@@ -21,7 +21,7 @@ from .episode import Episode
 KINDS = ("voice", "illustrate", "render", "shorts")
 
 # A job marked running longer than this was abandoned (runner died, timed out, cancelled).
-STALE_AFTER = {"voice": timedelta(minutes=45), "illustrate": timedelta(minutes=60),
+STALE_AFTER = {"voice": timedelta(minutes=45), "illustrate": timedelta(minutes=75),
                "render": timedelta(minutes=130), "shorts": timedelta(minutes=90)}
 
 
@@ -130,7 +130,9 @@ def run_voice_jobs() -> tuple[int, int]:
 def main(check_only: bool = False) -> int:
     for slug in release_stale():
         print(f"  released abandoned job: {slug}")
+    from . import illustrate
     queued = {kind: pending(kind) for kind in KINDS}
+    queued["kaggle (collect)"] = illustrate.waiting()  # notebooks still drawing from an earlier run
     total = sum(len(v) for v in queued.values())
     if check_only:
         print(f"{total} queued: " + (", ".join(f"{k} {s}" for k, v in queued.items() for s in v) or "nothing"))
@@ -139,6 +141,8 @@ def main(check_only: bool = False) -> int:
         print("Nothing queued.")
         return 0
     done = failed = 0
+    if queued["kaggle (collect)"]:
+        done, failed = illustrate.collect_waiting()
     for kind in KINDS:
         d, f = run_jobs(kind)
         done, failed = done + d, failed + f

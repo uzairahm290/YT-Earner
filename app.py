@@ -250,9 +250,24 @@ def summarize(ep: Episode, files: dict | None = None) -> dict:
     }
 
 
+_last_collect_wake = [0.0]
+
+
+def _wake_for_waiting(metas: list[dict]) -> None:
+    """Kaggle notebooks still drawing get collected by the worker. GitHub's schedule is unreliable,
+    so while the dashboard is open, wake the worker every 10 minutes until they're in."""
+    if INLINE_WORKER or not any((m.get("illustrate") or {}).get("state") == "waiting" for m in metas):
+        return
+    if time.time() - _last_collect_wake[0] > 600:
+        _last_collect_wake[0] = time.time()
+        _dispatch_worker()
+
+
 @app.get("/api/episodes")
 def list_episodes():
-    out = [summarize(Episode(slug), files) for slug, files in Episode.read_many(SUMMARY_FILES).items()]
+    files_by_slug = Episode.read_many(SUMMARY_FILES)
+    _wake_for_waiting([f.get("meta.json") or {} for f in files_by_slug.values()])
+    out = [summarize(Episode(slug), files) for slug, files in files_by_slug.items()]
     return sorted(out, key=lambda e: e["created_at"] or "", reverse=True)
 
 
@@ -552,7 +567,7 @@ def request_illustrations(slug: str, body: IllustrateBody):
         raise HTTPException(409, "Find pictures first.")
     meta = ep.read("meta.json")
     job = meta.get("illustrate") or {}
-    if job.get("state") == "running":
+    if job.get("state") in ("running", "waiting"):
         raise HTTPException(409, "Kaggle is drawing this story's batch right now. Try again when it finishes.")
 
     beats = {b["id"]: b for b in manifest["beats"]}

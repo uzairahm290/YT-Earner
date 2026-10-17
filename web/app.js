@@ -202,7 +202,7 @@ async function poll() {
 let lastWorkerCheck = 0;
 const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}|${e.shorts_state}|${e.shorts_made}`;
 async function watchVoice() {
-  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state].some((s) => ["queued", "running"].includes(s));
+  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state].some((s) => ["queued", "running", "waiting"].includes(s));
   if (!state.episodes.some(busy) || Date.now() - lastWorkerCheck < 8000) return;
   lastWorkerCheck = Date.now();
   const before = new Map(state.episodes.map((e) => [e.slug, workerState(e)]));
@@ -710,7 +710,7 @@ function visualsTab() {
   const timings = new Map((ep.voice?.beats || []).map((b) => [b.id, b]));
   const narration = new Map((ep.script?.chapters || []).flatMap((ch) => ch.beats.map((b) => [b.id, b.narration])));
   const stock = state.status.stock_video || [];
-  const running_draw = ep.meta?.illustrate?.state === "running";
+  const running_draw = ["running", "waiting"].includes(ep.meta?.illustrate?.state);
   const queuedBeats = new Set(ep.meta?.illustrate?.state === "queued" ? ep.meta.illustrate.beats || [] : []);
   const rows = v.beats.filter((b) => !state.onlyNeeds || needsYou(b));
 
@@ -779,7 +779,7 @@ function drawForm(b) {
 
 function illustrateButton(v) {
   const job = state.ep.meta?.illustrate || {};
-  if (["queued", "running"].includes(job.state)) return `<button class="btn" disabled>${job.state === "running" ? "Drawing…" : "Queued to draw"}</button>`;
+  if (["queued", "running", "waiting"].includes(job.state)) return `<button class="btn" disabled>${job.state === "queued" ? "Queued to draw" : "Drawing on Kaggle…"}</button>`;
   const n = (v.illustratable || []).length;
   return n ? `<button class="btn" data-act="illustrate" title="AI illustrations in the channel's ink style, for abstract beats only">✦ Illustrate ${n} abstract ${n === 1 ? "beat" : "beats"}</button>` : "";
 }
@@ -787,7 +787,9 @@ function illustrateButton(v) {
 function illustrateNote() {
   const job = state.ep.meta?.illustrate || {};
   if (job.state === "queued") return `<p class="v-note">Queued for Kaggle's GPU: ${job.beats?.length || 0} beats, ${state.status.worker === "every 10 minutes" ? "starts when the worker next checks in, then " : ""}about 10–15 minutes including Kaggle's queue. They'll appear as extra options on each beat.</p>`;
-  if (job.state === "running") return `<p class="v-note">Drawing on Kaggle's GPU… about 10–15 minutes. They'll appear as extra options marked AI.</p>`;
+  const k = job.kaggle_status ? ` Kaggle says: <b>${esc(job.kaggle_status)}</b>.` : "";
+  if (job.state === "running") return `<p class="v-note">Drawing on Kaggle's GPU…${k} Usually 20–30 minutes for a full batch. They'll appear as extra options marked AI.</p>`;
+  if (job.state === "waiting") return `<p class="v-note">Kaggle's free GPU queue is slow, so this batch is still drawing there.${k} The worker checks back every 10 minutes while this page is open and adds them when they're done.</p>`;
   if (job.state === "error") return `<p class="v-note v-err">Illustrations failed: ${esc(job.error || "")}</p>`;
   return "";
 }
