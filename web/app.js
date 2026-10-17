@@ -35,6 +35,8 @@ const state = {
   ep: null,        // full episode payload from the API
   draft: null,     // editable copy of ep.script
   dirty: false,
+  sdraft: null,    // editable copy of ep.shorts (production view)
+  sdirty: false,
   tab: "facts",
   angleChoice: null,
 };
@@ -198,19 +200,19 @@ async function poll() {
 // Narration and renders run on the GitHub worker, not in this server's job list,
 // so their state is read from the episode list (and the open story, for render progress).
 let lastWorkerCheck = 0;
-const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}`;
+const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}|${e.shorts_state}|${e.shorts_made}`;
 async function watchVoice() {
-  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state].some((s) => ["queued", "running"].includes(s));
+  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state].some((s) => ["queued", "running"].includes(s));
   if (!state.episodes.some(busy) || Date.now() - lastWorkerCheck < 8000) return;
   lastWorkerCheck = Date.now();
   const before = new Map(state.episodes.map((e) => [e.slug, workerState(e)]));
   state.episodes = await api("/api/episodes");
   const changed = state.episodes.filter((e) => before.get(e.slug) !== workerState(e));
   const route = parseRoute();
-  const openRendering = route.view === "episode" && state.ep?.meta?.render?.state === "running";
+  const openRendering = route.view === "episode" && [state.ep?.meta?.render?.state, state.ep?.meta?.shorts?.state].includes("running");
   if (!changed.length) {
     // keep the progress bar moving on the story you're looking at
-    if (openRendering && !state.dirty) await loadEpisode(route.slug, true);
+    if (openRendering && !state.dirty && !state.sdirty) await loadEpisode(route.slug, true);
     return;
   }
   renderRail();
@@ -222,8 +224,10 @@ async function watchVoice() {
     if (e.render_state === "error" && was[1] !== "error") toast(`Render failed: ${e.topic}`, true);
     if (e.illustrate_state === "done" && was[2] !== "done") toast(`Illustrations ready: ${e.topic}`);
     if (e.illustrate_state === "error" && was[2] !== "error") toast(`Illustrations failed: ${e.topic}`, true);
+    if (e.shorts_state === "done" && (was[3] !== "done" || was[4] !== String(e.shorts_made))) toast(`Shorts ready: ${e.topic}`);
+    if (e.shorts_state === "error" && was[3] !== "error") toast(`Shorts failed: ${e.topic}`, true);
   }
-  if (route.view === "episode" && changed.some((e) => e.slug === route.slug) && !state.dirty) await loadEpisode(route.slug, true);
+  if (route.view === "episode" && changed.some((e) => e.slug === route.slug) && !state.dirty && !state.sdirty) await loadEpisode(route.slug, true);
   else if (route.view === "desk") render();
 }
 
@@ -273,6 +277,8 @@ async function loadEpisode(slug, keepTab = false) {
   }
   state.draft = state.ep.script ? structuredClone(state.ep.script) : null;
   state.dirty = false;
+  state.sdraft = state.ep.shorts ? structuredClone(state.ep.shorts) : null;
+  state.sdirty = false;
   state.angleChoice = state.ep.meta?.angle || null;
   const r = parseRoute();
   if (r.tab) state.tab = r.tab;
@@ -378,8 +384,13 @@ function renderEpisode() {
   const stages = s.stages.map((st, i) => {
     const sr = rank(st.status);
     // "Verify facts" only counts as done when every flagged fact is ticked, even if the story moved on.
-    const done = st.key === "verify" ? ep.verify_done >= ep.verify_total && sr <= r : sr <= r;
-    const cls = !st.built ? "upcoming" : done ? "done" : sr === r + 1 || (st.key === "verify" && sr <= r) ? "current" : "";
+    let done = st.key === "verify" ? ep.verify_done >= ep.verify_total && sr <= r : sr <= r;
+    let current = sr === r + 1 || (st.key === "verify" && sr <= r);
+    if (st.parallel) {  // Shorts: done once any is made, open as soon as pictures are approved
+      done = ep.shorts_made > 0;
+      current = !done && ["visuals_ready", "rendered"].includes(ep.status);
+    }
+    const cls = !st.built ? "upcoming" : done ? "done" : current ? "current" : "";
     return `<li class="stage ${cls}"><span class="s-n">${i + 1}</span><span class="s-l">${esc(st.label)}</span></li>`;
   }).join("");
 
@@ -388,7 +399,7 @@ function renderEpisode() {
   const tabs = [
     ["facts", "Fact sheet", ep.verify_total ? `${ep.verify_done}/${ep.verify_total}` : ""],
     ["script", "Script", lintCount ? `${lintCount} to fix` : ""],
-    ["shorts", "Shorts", state.draft ? String(state.draft.shorts.length) : ""],
+    ["shorts", "Shorts", ep.shorts_made ? `${ep.shorts_made} made` : state.draft ? String(state.draft.shorts.length) : ""],
     ["visuals", "Pictures", ep.visuals ? (ep.visuals.summary.needs_you ? `${ep.visuals.summary.needs_you} need you` : "✓") : ""],
     ["package", "Title and thumbnail", ""],
     ...(ep.meta?.render?.state === "done" ? [["video", "Video", "✓"]] : []),
@@ -490,6 +501,7 @@ function nextStep(ep, running, flags) {
       }
       return box(`<strong>Narration and pictures approved.</strong> Cut them into the finished video: Ken Burns moves on the photos, lower thirds, one grade, captions.`,
         `<button class="btn btn-primary" data-act="render">Render the video</button>
+         ${state.tab !== "shorts" ? `<button class="btn" data-tab="shorts">Make Shorts</button>` : ""}
          <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
     }
     case "rendered": {
@@ -497,6 +509,7 @@ function nextStep(ep, running, flags) {
       return box(`<strong>Video rendered:</strong> ${clock(r.duration || 0)}, ${r.size_mb || "?"} MB, ${r.shots || "?"} shots${r.fallbacks ? `, ${r.fallbacks} used a card because their picture wouldn't load` : ""}. Upload to YouTube is the next stage.`,
         `${state.tab !== "video" ? `<button class="btn btn-primary" data-tab="video">Watch the preview</button>` : ""}
          ${downloadLink(r, "btn")}
+         ${state.tab !== "shorts" ? `<button class="btn" data-tab="shorts">${ep.shorts_made ? "Shorts" : "Make Shorts"}</button>` : ""}
          <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
     }
     default:
@@ -1014,7 +1027,80 @@ function genForm() {
 
 // ───── Shorts ─────
 
+// Production view, once pictures are approved: edit what each Short says, make them, watch them.
+function shortsDesk() {
+  const ep = state.ep;
+  const d = state.sdraft;
+  const job = ep.meta?.shorts || {};
+  const made = job.made || {};
+  const busy = ["queued", "running"].includes(job.state);
+  const picks = new Map((ep.visuals?.beats || []).map((b) => [b.id, b.candidates[b.chosen] || b.candidates[0]]));
+  const chosen = d.items.filter((it) => it.include);
+  const est = (it) => {
+    const w = [it.hook, ...it.lines.map((l) => l.text), it.outro].join(" ").trim().split(/\s+/).filter(Boolean).length;
+    return Math.round(w / (2.55 * 1.05) + 0.3 * (it.lines.length + 2));
+  };
+  const max = 58;
+
+  let status = "";
+  if (job.state === "queued") status = `<p class="v-note">Queued: ${job.ids?.length || 0} Shorts. ${state.status.worker === "every 10 minutes" ? "The worker checks every 10 minutes." : "The worker is starting."} About a minute each.</p>`;
+  else if (job.state === "running") status = `<p class="v-note">Making Shorts… ${job.progress || 0}% done. Voice, word timings, then the vertical cut.
+      <span class="progress-bar" role="progressbar" aria-valuenow="${job.progress || 0}" aria-valuemin="0" aria-valuemax="100"><span style="width:${job.progress || 0}%"></span></span></p>`;
+  else if (job.state === "error") status = `<p class="v-note v-err">Shorts failed: ${esc(job.error || "")}</p>`;
+  const failed = Object.entries(job.failed || {});
+
+  return `
+    <div class="sd-bar">
+      <label class="sd-label">Name at the top of every Short
+        <input type="text" id="shortLabel" value="${esc(d.label)}" maxlength="60">
+      </label>
+      <div class="sd-actions">
+        ${state.sdirty ? `<button class="btn" data-act="save-shorts">Save edits</button>` : ""}
+        <button class="btn btn-quiet" data-act="reset-shorts" title="Go back to the script's flagged moments">Start over from the script</button>
+        ${busy ? `<button class="btn" data-act="cancel-shorts" ${job.state === "running" ? "disabled" : ""}>${job.state === "running" ? "Making…" : "Cancel"}</button>`
+          : `<button class="btn btn-primary" data-act="make-shorts" ${chosen.length ? "" : "disabled"}>${chosen.length && chosen.every((it) => made[it.id]) ? "Remake" : "Make"} ${chosen.length} ${chosen.length === 1 ? "Short" : "Shorts"}</button>`}
+      </div>
+    </div>
+    ${status}
+    ${failed.length ? `<p class="v-note v-err">${failed.map(([k, v]) => `${esc(k)}: ${esc(v)}`).join("<br>")}</p>` : ""}
+    <p class="lede sd-lede">Each Short opens on its hook, plays the flagged lines from the long video over their pictures, and closes by pointing to the full video. Captions are burned in, with the spoken word highlighted.</p>
+    <div class="sd-list">
+      ${d.items.map((it, i) => {
+        const m = made[it.id];
+        const sec = est(it);
+        return `<article class="sd ${it.include ? "" : "off"}" data-si="${i}">
+          <div class="sd-phone">
+            ${m ? `<video class="sd-video" src="/api/episodes/${encodeURIComponent(ep.slug)}/shorts/${esc(it.id)}/preview?v=${encodeURIComponent(m.made_at || "")}" controls playsinline preload="metadata"></video>`
+              : `<div class="sd-mock"><span class="sd-mock-label">${esc(d.label)}</span>${picks.get(it.lines[0]?.beat) ? `<div class="sd-mock-pic">${candidateThumb(picks.get(it.lines[0].beat))}</div>` : ""}<span class="sd-mock-hook">${esc(it.hook)}</span></div>`}
+          </div>
+          <div class="sd-body">
+            <div class="sd-head">
+              <label class="sd-inc"><input type="checkbox" data-sf="include" ${it.include ? "checked" : ""}> <b>${esc(it.id.toUpperCase())}</b></label>
+              <span class="sd-len ${sec > max ? "warn" : ""}">~${sec}s${sec > max ? ` · over ${max}s, trim a line` : ""}</span>
+              ${m ? `<span class="sd-made">Made: ${m.duration}s · ${m.shots} shots · ${m.size_mb} MB${m.timed_by === "whisper" ? "" : " · timed by word length"}</span>` : ""}
+            </div>
+            <label class="sd-k">Hook <small>the first thing they hear: make it stop the scroll</small></label>
+            <textarea class="autosize sd-hook" rows="1" data-sf="hook">${esc(it.hook)}</textarea>
+            <label class="sd-k">Lines <small>from the long video, over their pictures</small></label>
+            <ol class="sd-lines">
+              ${it.lines.map((ln, li) => `<li data-li="${li}">
+                <span class="sd-thumb" title="${esc(ln.beat)}">${picks.get(ln.beat) ? candidateThumb(picks.get(ln.beat)) : ""}</span>
+                <textarea class="autosize" rows="1" data-sf="line" aria-label="Line ${li + 1}">${esc(ln.text)}</textarea>
+                <button class="sd-x" data-act="drop-line" aria-label="Remove this line" title="Remove this line">×</button>
+              </li>`).join("")}
+            </ol>
+            <label class="sd-k">Closing line</label>
+            <textarea class="autosize" rows="1" data-sf="outro">${esc(it.outro)}</textarea>
+            ${it.why ? `<p class="why">Why this works: ${esc(it.why)}</p>` : ""}
+            ${m ? `<div class="sd-dl">${downloadLink({ run_id: m.run_id, repo: m.repo, file: m.file }, "btn btn-quiet").replace("Download full video", "Download this Short")}</div>` : ""}
+          </div>
+        </article>`;
+      }).join("")}
+    </div>`;
+}
+
 function shortsTab() {
+  if (["visuals_ready", "rendered"].includes(state.ep.status) && state.sdraft) return shortsDesk();
   if (!state.draft) return `<div class="empty"><h2>No Shorts yet</h2><p>The script marks the moments that work as Shorts. Write the script first.</p></div>`;
   const d = state.draft;
   return `${scriptBar()}
@@ -1107,6 +1193,16 @@ function autosize(el) { el.style.height = "auto"; el.style.height = el.scrollHei
 document.addEventListener("input", (e) => {
   const el = e.target;
   if (el.classList.contains("autosize")) autosize(el);
+  if (el.id === "shortLabel" && state.sdraft) { state.sdraft.label = el.value; markShortsDirty(); return; }
+  if (el.dataset.sf && state.sdraft) {
+    const it = state.sdraft.items[+el.closest("[data-si]").dataset.si];
+    if (el.dataset.sf === "hook") it.hook = el.value;
+    else if (el.dataset.sf === "outro") it.outro = el.value;
+    else if (el.dataset.sf === "line") it.lines[+el.closest("[data-li]").dataset.li].text = el.value;
+    else if (el.dataset.sf === "include") { it.include = el.checked; markShortsDirty(true); return; }
+    markShortsDirty();
+    return;
+  }
   if (!state.draft) return;
 
   const row = el.closest(".beat");
@@ -1298,6 +1394,30 @@ document.addEventListener("click", async (e) => {
         await navigator.clipboard.writeText(state.ep.visuals.credits.join("\n"));
         toast("Credits copied"); break;
 
+      case "save-shorts": await saveShorts(); toast("Shorts saved"); renderEpisode(); break;
+      case "reset-shorts": {
+        if (!confirm("Throw away your edits to the Shorts and start again from the script?")) break;
+        state.ep = await api(`/api/episodes/${slug}/shorts/reset`, { method: "POST" });
+        state.sdraft = structuredClone(state.ep.shorts); state.sdirty = false; renderEpisode(); break;
+      }
+      case "drop-line": {
+        const it = state.sdraft.items[+btn.closest("[data-si]").dataset.si];
+        if (it.lines.length <= 1) { toast("A Short needs at least one line.", true); break; }
+        it.lines.splice(+btn.closest("[data-li]").dataset.li, 1);
+        markShortsDirty(true); break;
+      }
+      case "make-shorts": {
+        if (state.sdirty) await saveShorts();
+        state.ep = await api(`/api/episodes/${slug}/shorts/make`, { method: "POST", body: {} });
+        state.sdraft = structuredClone(state.ep.shorts);
+        state.episodes = await api("/api/episodes");
+        await poll();
+        lastWorkerCheck = 0;
+        toast("Queued: making Shorts"); renderEpisode(); break;
+      }
+      case "cancel-shorts":
+        state.ep = await api(`/api/episodes/${slug}/shorts/cancel`, { method: "POST" });
+        state.episodes = await api("/api/episodes"); renderEpisode(); break;
       case "open-draw": {
         const id = btn.closest("[data-beat]").dataset.beat;
         state.drawOpen = state.drawOpen === id ? null : id;
@@ -1408,6 +1528,28 @@ function openNew(topic = "") {
   $("#newExtra").value = "";
   $("#newDialog").showModal();
   $("#newTopic").focus();
+}
+
+function markShortsDirty(rerender = false) {
+  const first = !state.sdirty;
+  state.sdirty = true;
+  if (first || rerender) {  // show the Save button without stealing focus from the box being typed in
+    const focus = document.activeElement;
+    const sel = focus && focus.selectionStart;
+    const key = focus?.closest?.("[data-si]") ? [focus.closest("[data-si]").dataset.si, focus.dataset.sf, focus.closest("[data-li]")?.dataset.li] : null;
+    renderTab();
+    if (key) {
+      const box = document.querySelector(`[data-si="${key[0]}"] ${key[2] !== undefined ? `[data-li="${key[2]}"] ` : ""}[data-sf="${key[1]}"]`);
+      if (box && box.tagName === "TEXTAREA") { box.focus(); box.setSelectionRange(sel, sel); }
+    }
+  }
+}
+
+async function saveShorts() {
+  const slug = encodeURIComponent(state.ep.slug);
+  state.ep = await api(`/api/episodes/${slug}/shorts`, { method: "POST", body: { label: state.sdraft.label, items: state.sdraft.items } });
+  state.sdraft = structuredClone(state.ep.shorts);
+  state.sdirty = false;
 }
 
 // One picture at a time: the ✦ form on a beat in the Pictures tab.

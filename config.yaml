@@ -137,6 +137,24 @@ render:
   grain: 5                   # film grain strength, 0 to turn off
   preview_seconds: 60        # small preview stored for the dashboard
 
+# Vertical Shorts, cut from the moments the script flags.
+shorts:
+  width: 1080
+  height: 1920
+  fps: 30
+  crf: 20
+  speed: 1.05                # a touch quicker than the long video; Shorts are watched at a scroll
+  pause: 0.12                # gap between lines
+  max_shot_seconds: 3.0      # a new picture (or a new move on it) at least this often
+  pan_speed: 150             # px/second a wide photo slides across the tall frame
+  outro: "The whole story is in the full video on this channel."
+  max_seconds: 58            # warn above this: under a minute keeps them in the classic Shorts shelf
+  whisper_model: tiny.en     # word timings for the captions; ~75 MB, CPU
+  caption_y: 0.64            # where the caption block sits, as a share of the height
+  caption_size: 68
+  words_per_page: 7
+  preview_height: 640
+
 # Phrases that scream "AI wrote this". Script lint fails if any show up.
 banned_phrases:
   - "in today's fast-paced world"

@@ -2,3 +2,4 @@
 kokoro-onnx>=0.4,<0.7
 numpy>=1.26
 Pillow>=10.0
+faster-whisper>=1.0     # word timings for Shorts captions (CPU, tiny.en model)

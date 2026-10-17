@@ -111,17 +111,18 @@ class Narrator:
             d = ensure_model()
             self.model = Kokoro(str(d / MODEL_FILES[0]), str(d / MODEL_FILES[1]))
 
-    def speak(self, text: str) -> np.ndarray:
+    def speak(self, text: str, speed: float | None = None) -> np.ndarray:
         import numpy as np
         text = speakable(text)
+        speed = speed or cfg()["speed"]
         if not text:
             return np.zeros(0, dtype=np.float32)
         if self.mock:
             # A quiet tone as long as the line would take to read: keeps timings realistic.
-            seconds = max(0.6, len(text.split()) / 2.4)
+            seconds = max(0.6, len(text.split()) / (2.4 * speed / 0.95))
             t = np.arange(int(seconds * SAMPLE_RATE)) / SAMPLE_RATE
             return (0.08 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
-        samples, sr = self.model.create(text, voice=self.voice, speed=cfg()["speed"], lang="en-us")
+        samples, sr = self.model.create(text, voice=self.voice, speed=speed, lang="en-us")
         if sr != SAMPLE_RATE:
             raise VoiceError(f"Model returned {sr} Hz, expected {SAMPLE_RATE}")
         return np.asarray(samples, dtype=np.float32)

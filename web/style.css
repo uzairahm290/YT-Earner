@@ -616,3 +616,53 @@ a.btn-primary { color: var(--cue-ink); }
 .v-drawform .v-prompt:focus { outline: 2px solid var(--cue); outline-offset: 1px; }
 .v-drawform .v-hint { margin: 6px 0 10px; font-size: 12.5px; color: var(--faint); }
 .v-drawbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ───── Shorts desk ───── */
+.sd-bar { display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; }
+.sd-label { display: grid; gap: 6px; font: 600 12px/1.3 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--graphite); flex: 1 1 260px; max-width: 420px; }
+.sd-label input { font: 500 16px/1.3 var(--sans); letter-spacing: 0; text-transform: none; color: var(--ink); padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-sm); background: var(--sheet); }
+.sd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sd-lede { margin: 0 0 20px; max-width: 70ch; }
+.sd-list { display: grid; gap: 18px; }
+.sd {
+  display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 22px;
+  padding: 18px; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r-md);
+}
+.sd.off { opacity: .55; }
+.sd.off .sd-phone { filter: grayscale(1); }
+.sd-phone { position: relative; aspect-ratio: 9 / 16; border-radius: 18px; overflow: hidden; background: var(--ink); box-shadow: 0 0 0 6px #10161c, var(--shadow-lift); align-self: start; }
+.sd-video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+.sd-mock { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; color: #fff; }
+.sd-mock-pic { position: absolute; inset: 0; }
+.sd-mock-pic .v-media { width: 100%; height: 100%; object-fit: cover; filter: brightness(.7); }
+.sd-mock-pic .v-badge { display: none; }
+.sd-mock-label { position: relative; z-index: 1; margin-top: 18px; font: 700 12px/1 var(--sans); padding-bottom: 5px; border-bottom: 2px solid var(--marker); }
+.sd-mock-hook { position: relative; z-index: 1; margin: auto 14px 32%; text-align: center; font: 800 15px/1.3 var(--sans); text-shadow: 0 1px 8px rgba(0, 0, 0, .8); }
+.sd-body { min-width: 0; }
+.sd-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 10px; }
+.sd-inc { display: inline-flex; align-items: center; gap: 8px; font: 15px/1 var(--sans); cursor: pointer; }
+.sd-len { font: 13px/1 var(--type); color: var(--graphite); }
+.sd-len.warn { color: var(--grease); font-weight: 700; }
+.sd-made { font: 12.5px/1.3 var(--sans); color: var(--ok); background: var(--ok-wash); padding: 4px 8px; border-radius: var(--r-sm); }
+.sd-k { display: block; margin: 12px 0 5px; font: 600 12px/1.3 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--graphite); }
+.sd-k small { font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--faint); margin-left: 6px; }
+.sd textarea { width: 100%; box-sizing: border-box; font: 15px/1.45 var(--type); color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--r-sm); padding: 7px 9px; resize: none; }
+.sd textarea:focus { outline: 2px solid var(--cue); outline-offset: 1px; background: var(--sheet); }
+.sd .sd-hook { font: 700 16px/1.4 var(--sans); background: var(--marker-wash); border-color: var(--marker); }
+.sd-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.sd-lines li { display: grid; grid-template-columns: 54px minmax(0, 1fr) 28px; gap: 8px; align-items: start; }
+.sd-thumb { width: 54px; aspect-ratio: 16 / 9; border-radius: var(--r-sm); overflow: hidden; background: var(--rule); margin-top: 3px; }
+.sd-thumb .v-media { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sd-thumb .v-badge { display: none; }
+.sd-thumb .v-card { height: 100%; padding: 3px 4px; box-sizing: border-box; overflow: hidden; }
+.sd-thumb .v-card b { font-size: 7px; line-height: 1.1; }
+.sd-thumb .v-card span { display: none; }
+.sd-mock-pic .v-card { height: 100%; }
+.sd-x { width: 28px; height: 28px; margin-top: 3px; border: 1px solid transparent; border-radius: var(--r-sm); background: none; color: var(--faint); font-size: 18px; cursor: pointer; }
+.sd-x:hover { color: var(--grease); border-color: var(--rule); }
+.sd-dl { margin-top: 12px; }
+.sd .why { margin: 10px 0 0; font-size: 13px; color: var(--faint); }
+@media (max-width: 720px) {
+  .sd { grid-template-columns: 1fr; }
+  .sd-phone { width: min(240px, 70%); justify-self: center; }
+}

@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import illustrate, research, script, topics, visuals, voice
+from pipeline import illustrate, research, script, shorts, topics, visuals, voice
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -52,10 +52,12 @@ STAGES = [
     {"key": "voice", "label": "Voice", "status": "voiced", "built": True},
     {"key": "visuals", "label": "Visuals", "status": "visuals_ready", "built": True},
     {"key": "render", "label": "Render", "status": "rendered", "built": True},
-    {"key": "shorts", "label": "Shorts", "status": "shorts_ready", "built": False},
+    # Shorts run beside the long video rather than after it; the UI marks this stage done
+    # once any Short is made (meta.shorts.made), not by status.
+    {"key": "shorts", "label": "Shorts", "status": "shorts_ready", "built": True, "parallel": True},
     {"key": "upload", "label": "Upload", "status": "uploaded", "built": False},
 ]
-STATUS_ORDER = ["new"] + [s["status"] for s in STAGES]
+STATUS_ORDER = ["new"] + [s["status"] for s in STAGES if not s.get("parallel")]
 
 app = FastAPI(title="docu-pipeline")
 
@@ -242,6 +244,8 @@ def summarize(ep: Episode, files: dict | None = None) -> dict:
         "voice_state": (meta.get("voice") or {}).get("state"),
         "render_state": (meta.get("render") or {}).get("state"),
         "illustrate_state": (meta.get("illustrate") or {}).get("state"),
+        "shorts_state": (meta.get("shorts") or {}).get("state"),
+        "shorts_made": len((meta.get("shorts") or {}).get("made") or {}),
         "running": any(j["slug"] == ep.slug and j["status"] == "running" for j in _jobs.values()),
     }
 
@@ -271,7 +275,19 @@ def get_episode(slug: str):
             "script": sc,
             "lint": ep.read("lint.json"),
             "voice": timings,
-            "visuals": vis}
+            "visuals": vis,
+            "shorts": _shorts_view(ep)}
+
+
+def _shorts_view(ep: Episode) -> dict | None:
+    data = shorts.load(ep)
+    if not data:
+        return None
+    for it in data["items"]:
+        it["seconds"] = shorts.estimate_seconds(it)
+    data["problems"] = shorts.check(data)
+    data["saved"] = ep.read("shorts.json") is not None
+    return data
 
 
 class NewEpisode(BaseModel):
@@ -567,6 +583,109 @@ def request_illustrations(slug: str, body: IllustrateBody):
     return get_episode(slug)
 
 
+# ──────────────────────────── shorts ────────────────────────────
+
+class ShortLine(BaseModel):
+    beat: str
+    text: str
+
+
+class ShortItem(BaseModel):
+    id: str
+    include: bool = True
+    hook: str
+    lines: list[ShortLine]
+    outro: str = ""
+    why: str = ""
+
+
+class ShortsBody(BaseModel):
+    label: str
+    items: list[ShortItem]
+
+
+@app.post("/api/episodes/{slug}/shorts")
+def save_shorts(slug: str, body: ShortsBody):
+    ep = _load(slug)
+    manifest = ep.read("visuals.json") or {}
+    known = {b["id"] for b in manifest.get("beats", [])} | {b["id"] for ch in (ep.read("script.json") or {}).get("chapters", []) for b in ch["beats"]}
+    for it in body.items:
+        for ln in it.lines:
+            if ln.beat not in known:
+                raise HTTPException(422, f"{it.id}: no beat {ln.beat}.")
+    data = {"label": body.label.strip()[:60] or ep.read("meta.json")["topic"],
+            "items": [it.model_dump() for it in body.items]}
+    ep.write("shorts.json", data)
+    return get_episode(slug)
+
+
+@app.post("/api/episodes/{slug}/shorts/reset")
+def reset_shorts(slug: str):
+    """Throw away your edits and start again from the script's flagged moments."""
+    ep = _load(slug)
+    script_ = ep.read("script.json")
+    if not script_:
+        raise HTTPException(409, "There's no script yet.")
+    ep.write("shorts.json", shorts.build(script_, ep.read("meta.json")["topic"]))
+    return get_episode(slug)
+
+
+class MakeShortsBody(BaseModel):
+    ids: list[str] | None = None
+
+
+@app.post("/api/episodes/{slug}/shorts/make")
+def make_shorts(slug: str, body: MakeShortsBody):
+    ep = _load(slug)
+    meta = ep.read("meta.json")
+    if meta["status"] not in ("visuals_ready", "rendered"):
+        raise HTTPException(409, "Approve the pictures first. Shorts reuse the long video's pictures.")
+    job = meta.get("shorts") or {}
+    if job.get("state") == "running":
+        raise HTTPException(409, "Shorts are being made right now.")
+    if job.get("state") == "queued":
+        _nudge_worker("shorts", slug)
+        return get_episode(slug)
+    data = shorts.load(ep)
+    if not data or not data["items"]:
+        raise HTTPException(409, "The script didn't flag any Shorts.")
+    problems = shorts.check(data)
+    if problems:
+        raise HTTPException(422, " ".join(problems))
+    ids = [it["id"] for it in data["items"] if it.get("include", True) and (not body.ids or it["id"] in body.ids)]
+    if not ids:
+        raise HTTPException(409, "Tick at least one Short to make.")
+    if not ep.read("shorts.json"):
+        ep.write("shorts.json", data)  # freeze what gets made
+    meta["shorts"] = {**job, "state": "queued", "ids": ids, "error": None, "progress": 0,
+                      "requested_at": datetime.now(timezone.utc).isoformat()}
+    ep.write("meta.json", meta)
+    _nudge_worker("shorts", slug)
+    return get_episode(slug)
+
+
+@app.post("/api/episodes/{slug}/shorts/cancel")
+def cancel_shorts(slug: str):
+    ep = _load(slug)
+    meta = ep.read("meta.json")
+    job = meta.get("shorts") or {}
+    if job.get("state") == "running":
+        raise HTTPException(409, "They're already being made. It can't be stopped from here.")
+    if job.get("state") in ("queued", "error"):
+        job["state"] = "done" if job.get("made") else "cancelled"
+        job["error"] = None
+        ep.write("meta.json", meta)
+    return get_episode(slug)
+
+
+@app.get("/api/episodes/{slug}/shorts/{short_id}/preview")
+def short_preview(slug: str, short_id: str):
+    data = shorts.load_preview(_load(slug), short_id)
+    if not data:
+        raise HTTPException(404, "No preview yet.")
+    return Response(data, media_type="video/mp4", headers={"Cache-Control": "private, max-age=60"})
+
+
 # ──────────────────────────── render ────────────────────────────
 
 @app.post("/api/episodes/{slug}/render")
@@ -644,7 +763,8 @@ def _queue_voice(ep: Episode, voice_id: str | None) -> None:
 def _nudge_worker(kind: str, slug: str | None = None) -> None:
     if INLINE_WORKER:
         from pipeline import worker
-        start_job(kind, f"Running queued {kind}", lambda: worker.run_jobs(kind), slug=slug)
+        label = {"illustrate": "Drawing illustrations", "render": "Rendering", "shorts": "Making Shorts"}.get(kind, kind)
+        start_job(kind, label, lambda: worker.run_jobs(kind), slug=slug)
     else:
         _dispatch_worker()
 
