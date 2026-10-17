@@ -1,0 +1,18 @@
+{
+  "videos": [
+    {
+      "id": 1, "url": "https://www.pexels.com/video/factory-floor-1/", "image": "https://images.pexels.com/videos/1/thumb.jpeg",
+      "duration": 14, "user": {"name": "Alex Shot"},
+      "video_files": [
+        {"link": "https://videos.pexels.com/1/sd.mp4", "width": 960, "height": 540, "file_type": "video/mp4"},
+        {"link": "https://videos.pexels.com/1/hd.mp4", "width": 1920, "height": 1080, "file_type": "video/mp4"},
+        {"link": "https://videos.pexels.com/1/uhd.mp4", "width": 3840, "height": 2160, "file_type": "video/mp4"}
+      ]
+    },
+    {
+      "id": 2, "url": "https://www.pexels.com/video/factory-2/", "image": "https://images.pexels.com/videos/2/thumb.jpeg",
+      "duration": 9, "user": {"name": "Sam Lens"},
+      "video_files": [{"link": "https://videos.pexels.com/2/hd.mp4", "width": 1280, "height": 720, "file_type": "video/mp4"}]
+    }
+  ]
+}

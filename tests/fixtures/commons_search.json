@@ -1,0 +1,54 @@
+{
+  "query": {
+    "pages": {
+      "101": {
+        "title": "File:Foxconn Longhua campus.jpg", "index": 2,
+        "imageinfo": [{
+          "url": "https://upload.wikimedia.org/wikipedia/commons/a/ab/Foxconn_Longhua_campus.jpg",
+          "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Foxconn_Longhua_campus.jpg/640px-Foxconn_Longhua_campus.jpg",
+          "descriptionurl": "https://commons.wikimedia.org/wiki/File:Foxconn_Longhua_campus.jpg",
+          "width": 4000, "height": 2667, "mime": "image/jpeg",
+          "extmetadata": {
+            "LicenseShortName": {"value": "CC BY-SA 4.0"},
+            "LicenseUrl": {"value": "https://creativecommons.org/licenses/by-sa/4.0"},
+            "Artist": {"value": "<a href=\"//commons.wikimedia.org/wiki/User:Example\">Jane Example</a>"},
+            "ObjectName": {"value": "Foxconn Longhua campus"}
+          }
+        }]
+      },
+      "102": {
+        "title": "File:Foxconn tiny.jpg", "index": 1,
+        "imageinfo": [{
+          "url": "https://upload.wikimedia.org/x/tiny.jpg", "thumburl": "https://upload.wikimedia.org/x/tiny.jpg",
+          "width": 400, "height": 300, "mime": "image/jpeg",
+          "extmetadata": {"LicenseShortName": {"value": "Public domain"}}
+        }]
+      },
+      "103": {
+        "title": "File:Foxconn logo.svg", "index": 3,
+        "imageinfo": [{
+          "url": "https://upload.wikimedia.org/x/logo.svg", "width": 2000, "height": 800, "mime": "image/svg+xml",
+          "extmetadata": {"LicenseShortName": {"value": "Public domain"}}
+        }]
+      },
+      "104": {
+        "title": "File:Foxconn press photo.jpg", "index": 4,
+        "imageinfo": [{
+          "url": "https://upload.wikimedia.org/x/press.jpg", "thumburl": "https://upload.wikimedia.org/x/640px-press.jpg",
+          "width": 3000, "height": 2000, "mime": "image/jpeg",
+          "extmetadata": {"LicenseShortName": {"value": "GFDL"}}
+        }]
+      },
+      "105": {
+        "title": "File:Foxconn Shenzhen 2010.jpg", "index": 5,
+        "imageinfo": [{
+          "url": "https://upload.wikimedia.org/wikipedia/commons/c/cd/Foxconn_Shenzhen_2010.jpg",
+          "thumburl": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Foxconn_Shenzhen_2010.jpg/640px-Foxconn_Shenzhen_2010.jpg",
+          "descriptionurl": "https://commons.wikimedia.org/wiki/File:Foxconn_Shenzhen_2010.jpg",
+          "width": 1600, "height": 1067, "mime": "image/jpeg",
+          "extmetadata": {"LicenseShortName": {"value": "Public domain"}, "Artist": {"value": "Unknown"}}
+        }]
+      }
+    }
+  }
+}
