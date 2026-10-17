@@ -8,6 +8,7 @@ from unittest import mock
 os.environ["DOCU_MOCK_LLM"] = "1"
 os.environ["DOCU_MOCK_TTS"] = "1"
 os.environ["DOCU_MOCK_VISUALS"] = "1"
+os.environ["DOCU_MOCK_DEPTH"] = "1"  # parallax with a stand-in depth map
 
 from pipeline import render, research, script, visuals, voice, worker  # noqa: E402
 from pipeline.config import EPISODES_DIR, load_config  # noqa: E402
@@ -68,6 +69,29 @@ class Render(unittest.TestCase):
         self.assertTrue(out.exists())
         self.assertTrue(render.load_preview(self.ep).startswith(b"\x00\x00\x00") or render.load_preview(self.ep)[4:8] == b"ftyp")
         self.assertTrue(self.ep.read("render/captions.srt"))
+        # Dissolves and split shots must not drift the picture away from the narration.
+        import subprocess
+        dur = lambda kind: float(subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", kind, "-show_entries", "stream=duration", "-of", "csv=p=0",
+             str(out)], capture_output=True, text=True).stdout.strip())
+        timings = self.ep.read("voice/timings.json")
+        self.assertAlmostEqual(dur("v:0"), timings["duration"], delta=0.15)
+        self.assertAlmostEqual(dur("a:0"), timings["duration"], delta=0.15)
+        self.assertGreaterEqual(job["shots"], len(timings["beats"]))
+        self.assertEqual(job["music"], "builtin:calm")
+
+    def test_long_beats_are_split_across_real_pictures_only(self):
+        self.ready()
+        manifest = self.ep.read("visuals.json")
+        sc, timings = self.ep.read("script.json"), self.ep.read("voice/timings.json")
+        picks = {b["id"]: b["candidates"][b["chosen"]] for b in manifest["beats"]}
+        with mock.patch("pipeline.render.cfg", return_value={**TINY, "max_shot_seconds": 2.0}):
+            cut = render.shots(sc, timings, picks, manifest)
+        self.assertGreater(len(cut), len(picks))
+        self.assertTrue(all(s["seconds"] <= 2.0 * 1.2 for s in cut if s["pick"]["source"] != "card"))
+        self.assertFalse(any(s["pick"]["source"] == "ai" and s["pick"] is not picks[s["beat"]["id"]] for s in cut))
+        total = sum(s["seconds"] for s in cut)
+        self.assertAlmostEqual(total, timings["duration"], places=2)
 
     def test_refuses_when_the_script_changed_after_recording(self):
         self.ready()
