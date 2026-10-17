@@ -70,6 +70,22 @@ def check_prompt(text: str) -> tuple[bool, str]:
     return True, ""
 
 
+_PEOPLE = re.compile(r"\b(man|men|woman|women|person|people|crowd|face|faces|portrait|ceo|founder|founders|"
+                     r"worker|workers|engineer|engineers|employee|employees|staff|boy|girl|child|children|kid|kids|"
+                     r"executive|executives|businessman|businesswoman|customer|customers|audience)\b", re.I)
+
+
+def check_photo_prompt(text: str) -> tuple[bool, str]:
+    """Photo style is for places and things only: a realistic face in a documentary reads as a real person."""
+    ok, why = check_prompt(text)
+    if not ok:
+        return ok, why
+    if _PEOPLE.search(text):
+        return False, ("Photo style can't show people: a realistic face in a documentary looks like a real person. "
+                       "Describe a place or object, or switch to Ink for people.")
+    return True, ""
+
+
 def prompt_for(query: str) -> str:
     subject = re.sub(r"\b(stock footage|footage|b-roll|slow motion|fast motion|close up of|animation of|animated)\b",
                      "", query, flags=re.I)
@@ -120,23 +136,40 @@ try:
     from diffusers import AutoencoderKL, StableDiffusionXLPipeline
 
     vae = AutoencoderKL.from_pretrained(JOB["vae"], torch_dtype=torch.float16)
-    pipe = StableDiffusionXLPipeline.from_pretrained(
-        JOB["model"], vae=vae, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
-    ).to("cuda")
-    pipe.set_progress_bar_config(disable=True)
-    print(f"model loaded ({time.time() - started:.0f}s)", flush=True)
 
-    for item in JOB["items"]:
-        made[item["id"]] = []
-        for k in range(JOB["per_beat"]):
-            g = torch.Generator("cuda").manual_seed(item["seed"] + k)
-            img = pipe(item["prompt"], negative_prompt=JOB["negative"], width=JOB["width"], height=JOB["height"],
-                       num_inference_steps=JOB["steps"], guidance_scale=JOB["guidance"], generator=g).images[0]
-            fname = f"{item['id']}-{k}.jpg"
-            img.save(os.path.join(OUT, fname), quality=88)
-            made[item["id"]].append(fname)
-        save()
-        print(f"{item['id']}: done ({time.time() - started:.0f}s)", flush=True)
+    def load(model):
+        try:
+            p = StableDiffusionXLPipeline.from_pretrained(model, vae=vae, torch_dtype=torch.float16,
+                                                          variant="fp16", use_safetensors=True)
+        except Exception:  # some fine-tunes only publish full-precision files
+            p = StableDiffusionXLPipeline.from_pretrained(model, vae=vae, torch_dtype=torch.float16,
+                                                          use_safetensors=True)
+        p.set_progress_bar_config(disable=True)
+        return p.to("cuda")
+
+    # One model at a time (a T4 can't hold two): ink items on the base model, photo items on the
+    # photoreal fine-tune, falling back to the base model if that one won't load.
+    for model in dict.fromkeys(item.get("model", JOB["model"]) for item in JOB["items"]):
+        try:
+            pipe = load(model)
+        except Exception as e:
+            print(f"couldn't load {model} ({e}); using {JOB['model']}", flush=True)
+            pipe = load(JOB["model"])
+        print(f"{model} loaded ({time.time() - started:.0f}s)", flush=True)
+        for item in [i for i in JOB["items"] if i.get("model", JOB["model"]) == model]:
+            made[item["id"]] = []
+            for k in range(JOB["per_beat"]):
+                g = torch.Generator("cuda").manual_seed(item["seed"] + k)
+                img = pipe(item["prompt"], negative_prompt=item.get("negative", JOB["negative"]),
+                           width=JOB["width"], height=JOB["height"], num_inference_steps=JOB["steps"],
+                           guidance_scale=item.get("guidance", JOB["guidance"]), generator=g).images[0]
+                fname = f"{item['id']}-{k}.jpg"
+                img.save(os.path.join(OUT, fname), quality=88)
+                made[item["id"]].append(fname)
+            save()
+            print(f"{item['id']}: done ({time.time() - started:.0f}s)", flush=True)
+        del pipe
+        torch.cuda.empty_cache()
     save()
 except Exception as e:
     traceback.print_exc()
@@ -282,7 +315,8 @@ def _demo_images(items: list[dict], out_dir: Path) -> dict:
 
 # ──────────────────────────── storing results ────────────────────────────
 
-def store(slug: str, images: dict[str, list[Path]], prompts: dict[str, str] | None = None) -> int:
+def store(slug: str, images: dict[str, list[Path]], prompts: dict[str, str] | None = None,
+          styles: dict[str, str] | None = None) -> int:
     """Add the images to each beat as 'AI illustration' options. Doesn't change your picks."""
     ep = Episode.load(slug)
     m = ep.read("visuals.json")
@@ -295,9 +329,11 @@ def store(slug: str, images: dict[str, list[Path]], prompts: dict[str, str] | No
             b["candidates"] = [c for c in b["candidates"] if c.get("file") != file]
             # after real picks and uploads, before the fallback card
             card_at = next((i for i, c in enumerate(b["candidates"]) if c["source"] == "card"), len(b["candidates"]))
+            photo = (styles or {}).get(b["id"]) == "photo"
             b["candidates"].insert(card_at, {
-                "source": "ai", "kind": "image", "file": file,
-                "title": "AI illustration", "credit": "AI illustration (SDXL)",
+                "source": "ai", "kind": "image", "file": file, "style": "photo" if photo else "ink",
+                "title": "AI photo-style image" if photo else "AI illustration",
+                "credit": "AI image (RealVisXL)" if photo else "AI illustration (SDXL)",
                 "license": "CreativeML OpenRAIL++-M",
                 "prompt": (prompts or {}).get(b["id"]) or prompt_for(b["query"]),
             })
@@ -317,55 +353,67 @@ def _set(slug: str, **fields) -> dict:
 
 
 def _finish(slug: str, kernel_id: str | None, state: str, failure: str, used: dict, started: float,
-            items: list[dict] | None = None) -> dict:
+            items: list[dict] | None = None, styles: dict | None = None) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         if os.getenv("DOCU_MOCK_ILLUSTRATE") == "1":
             images = _demo_images(items or [{"id": b} for b in used], Path(tmp))
         else:
             images = collect(kernel_id, Path(tmp), state, failure)
-        added = store(slug, images, used)
+        added = store(slug, images, used, styles)
     job = _set(slug, state="done", added=added, kaggle_status="complete",
                seconds_taken=round(time.time() - started))
     print(f"  ✓ {added} illustrations added ({time.time() - started:.0f}s)")
     return job
 
 
-def run(slug: str, beat_ids: list[str], prompts: dict[str, str] | None = None) -> dict:
+def run(slug: str, beat_ids: list[str], prompts: dict[str, str] | None = None,
+        styles: dict[str, str] | None = None) -> dict:
     """prompts: {beat_id: your own wording} for beats you drew one at a time from the Pictures tab."""
     ep = Episode.load(slug)
     m = ep.read("visuals.json") or {}
     beats = {b["id"]: b for b in m.get("beats", [])}
-    prompts = prompts or {}
-    items, used = [], {}
+    prompts, styles = prompts or {}, styles or {}
+    c = cfg()
+    items, used, photo_ids = [], {}, {}
     for i, bid in enumerate(beat_ids):
         b = beats.get(bid)
         if not b:
             continue
         # Re-checked here: the queue can't be used to slip a real-world beat or a named prompt through.
-        if bid in prompts:
+        photo = styles.get(bid) == "photo" and bid in prompts
+        if photo:
+            if not check_photo_prompt(prompts[bid])[0]:
+                continue
+            prompt = f"{prompts[bid].strip()}, {c['photo_style'].strip()}"
+        elif bid in prompts:
             if not check_prompt(prompts[bid])[0]:
                 continue
-            prompt = f"{prompts[bid].strip()}, {cfg()['style'].strip()}"
+            prompt = f"{prompts[bid].strip()}, {c['style'].strip()}"
         elif eligible(b["type"], b["query"])[0]:
             prompt = prompt_for(b["query"])
         else:
             continue
         drawn_before = sum(1 for c in b["candidates"] if c["source"] == "ai")
-        items.append({"id": bid, "prompt": prompt, "seed": 1000 + i * 17 + drawn_before * 101})
+        item = {"id": bid, "prompt": prompt, "seed": 1000 + i * 17 + drawn_before * 101}
+        if photo:
+            item.update(model=c["photo_model"], negative=c["photo_negative"].strip(), guidance=c["photo_guidance"])
+        items.append(item)
         used[bid] = prompt
+        if photo:
+            photo_ids[bid] = "photo"
     if not items:
         raise IllustrateError("None of those beats can be illustrated.")
     started = time.time()
     print(f"[illustrate] {ep.read('meta.json')['topic']}: {len(items)} beats")
     if os.getenv("DOCU_MOCK_ILLUSTRATE") == "1":
-        return _finish(slug, None, "complete", "", used, started, items)
+        return _finish(slug, None, "complete", "", used, started, items, photo_ids)
 
     kernel_id = push(items, slug)
     _set(slug, kernel=kernel_id, pushed_at=datetime.now(timezone.utc).isoformat(), used=used,
-         kaggle_status="queued")
+         styles=photo_ids, kaggle_status="queued")
     state, failure = wait(kernel_id, KAGGLE_TIMEOUT, on_status=lambda s: _set(slug, kaggle_status=s))
     if state in ("complete", "error"):
-        return _finish(slug, kernel_id, state, failure, used, started)
+        return _finish(slug, kernel_id, state, failure, used, started, styles=photo_ids)
     # Kaggle's free GPU queue is slow today. Don't throw the work away: the next worker run
     # picks the pictures up when the notebook finishes.
     print(f"  Kaggle still {state} after {KAGGLE_TIMEOUT // 60} min; the next worker run collects the pictures")
@@ -389,7 +437,7 @@ def collect_waiting(max_wait: float = 15 * 60) -> tuple[int, int]:
         try:
             state, failure = wait(kernel_id, max_wait, on_status=lambda s, slug=slug: _set(slug, kaggle_status=s))
             if state in ("complete", "error"):
-                _finish(slug, kernel_id, state, failure, used, time.time())
+                _finish(slug, kernel_id, state, failure, used, time.time(), styles=job.get("styles"))
                 done += 1
             elif age_h > 6:
                 raise IllustrateError("Kaggle never got to it (6 hours in its queue). Try again later.")

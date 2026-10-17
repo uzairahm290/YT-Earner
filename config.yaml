@@ -124,6 +124,17 @@ illustrate:
     photo, photograph, photorealistic, realistic, 3d render, text, letters, words, numbers, logo,
     watermark, signature, brand, face close-up, portrait, celebrity, blurry, lowres
 
+  # Photo style, for generic places and things only (no people, names or dates), picked per
+  # picture in the ✦ box. Videos that use one are marked "altered or synthetic" on upload.
+  photo_model: SG161222/RealVisXL_V5.0   # photoreal SDXL fine-tune, CreativeML OpenRAIL++-M
+  photo_guidance: 5.0
+  photo_style: >-
+    documentary photograph, natural light, 35mm lens, realistic textures, subtle film grain,
+    muted color grade, shallow depth of field
+  photo_negative: >-
+    text, letters, words, numbers, logo, watermark, signature, brand, person, people, face, hands,
+    cartoon, illustration, painting, drawing, 3d render, cgi, oversaturated, blurry, lowres, deformed
+
 # Final cut.
 render:
   width: 1920

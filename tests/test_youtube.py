@@ -67,6 +67,17 @@ class Flow(unittest.TestCase):
         self.assertTrue(p["shorts"]["s1"]["title"].endswith("#Shorts"))
         self.assertLessEqual(sum(len(t) + 1 for t in p["long"]["tags"]), 480)
 
+    def test_realistic_ai_marks_the_video_synthetic(self):
+        self.assertFalse(youtube.package(self.ep)["long"]["synthetic"])
+        m = self.ep.read("visuals.json")
+        b = m["beats"][0]
+        b["candidates"].insert(0, {"source": "ai", "style": "photo", "kind": "image", "file": "visuals/ai/x.b64"})
+        b["chosen"] = 0
+        self.ep.write("visuals.json", m)
+        p = youtube.package(self.ep)
+        self.assertTrue(p["long"]["synthetic"])
+        self.assertIn("AI-generated images", p["long"]["description"])
+
     def test_worker_uploads_long_then_shorts_link_to_it(self):
         meta = self.ep.read("meta.json")
         meta["youtube"] = {"state": "queued", "requested_at": "2026-01-01T00:00:00+00:00",

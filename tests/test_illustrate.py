@@ -152,6 +152,25 @@ class Flow(unittest.TestCase):
         b = next(b for b in self.ep.read("visuals.json")["beats"] if b["id"] == todo[0])
         self.assertEqual(sum(c["source"] == "ai" for c in b["candidates"]), 1)
 
+    def test_photo_style_is_places_and_things_only(self):
+        self.assertTrue(illustrate.check_photo_prompt("robot arms on an empty assembly line at night")[0])
+        for bad in ["a factory worker at a bench", "engineers in a meeting room", "Apple store at night"]:
+            self.assertFalse(illustrate.check_photo_prompt(bad)[0], bad)
+
+    def test_photo_items_use_the_photoreal_model_and_are_labelled(self):
+        m = self.ep.read("visuals.json")
+        bid = m["beats"][0]["id"]
+        with mock.patch.object(illustrate, "_finish", wraps=illustrate._finish) as fin:
+            illustrate.run(SLUG, [bid], {bid: "macro shot of a circuit board"}, {bid: "photo"})
+        items = fin.call_args.args[6]
+        self.assertEqual(items[0]["model"], illustrate.cfg()["photo_model"])
+        self.assertIn("documentary photograph", items[0]["prompt"])
+        b = next(b for b in self.ep.read("visuals.json")["beats"] if b["id"] == bid)
+        ai = [c for c in b["candidates"] if c["source"] == "ai"]
+        self.assertTrue(ai and all(c["style"] == "photo" for c in ai))
+        with self.assertRaises(illustrate.IllustrateError):
+            illustrate.run(SLUG, [bid], {bid: "a crowd of people"}, {bid: "photo"})
+
     def test_queue_cannot_smuggle_a_real_world_beat(self):
         m = self.ep.read("visuals.json")
         real = next(b["id"] for b in m["beats"] if b["type"] == "archive_photo")

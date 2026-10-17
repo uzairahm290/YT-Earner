@@ -691,7 +691,7 @@ function candidateThumb(c, big = false) {
   }
   return `<img class="v-media" src="${esc(src)}" alt="${esc(c.title || "")}" loading="lazy" referrerpolicy="no-referrer">
     ${c.kind === "video" ? `<span class="v-badge">▶ ${c.duration ? `${c.duration}s` : "video"}</span>` : ""}
-    ${c.source === "ai" ? `<span class="v-badge v-ai">AI</span>` : ""}`;
+    ${c.source === "ai" ? `<span class="v-badge v-ai">${c.style === "photo" ? "AI photo" : "AI"}</span>` : ""}`;
 }
 
 function cardPreview(c, big) {
@@ -759,7 +759,7 @@ function visualsTab() {
               <input type="text" class="v-query" value="${esc(b.query)}" aria-label="Search words for this beat">
               <button class="btn btn-quiet" data-act="search-visual">Search</button>
             </div>
-            <p class="v-credit">${c.source === "card" ? "Generated card, no credit needed" : c.source === "ai" ? "AI illustration (SDXL), drawn for this beat in the channel's style" : `${esc(SOURCE_NAME[c.source])}${c.credit && c.source !== "upload" ? ` · ${esc(c.credit)}` : ""}${c.license && c.source !== "upload" ? ` · ${esc(c.license)}` : ""}${c.page ? ` · <a href="${esc(c.page)}" target="_blank" rel="noopener">source</a>` : ""}`}</p>
+            <p class="v-credit">${c.source === "card" ? "Generated card, no credit needed" : c.source === "ai" ? (c.style === "photo" ? "AI photo-style image (RealVisXL). Marks the video as AI-generated content on upload" : "AI illustration (SDXL), drawn for this beat in the channel's style") : `${esc(SOURCE_NAME[c.source])}${c.credit && c.source !== "upload" ? ` · ${esc(c.credit)}` : ""}${c.license && c.source !== "upload" ? ` · ${esc(c.license)}` : ""}${c.page ? ` · <a href="${esc(c.page)}" target="_blank" rel="noopener">source</a>` : ""}`}</p>
             ${b.errors?.length ? `<p class="v-err">Search problem: ${esc(b.errors[0])}</p>` : ""}
           </div>
         </li>`;
@@ -777,10 +777,14 @@ function drawForm(b) {
   const abstract = (state.ep.visuals?.illustratable || []).includes(b.id) || b.candidates.some((c) => c.source === "ai");
   const suggestion = abstract ? b.query.replace(/\b(close up of|slow motion|stock footage|footage)\b/gi, "").replace(/\s+/g, " ").trim() : "";
   return `<form class="v-drawform" data-act="draw-beat">
-    <label>What should the illustration show?</label>
+    <div class="v-styles" role="radiogroup" aria-label="Style">
+      <label class="v-style"><input type="radio" name="dstyle-${b.id}" value="ink" checked><span><b>Ink illustration</b>The channel's drawn style. Ideas, people as figures.</span></label>
+      <label class="v-style"><input type="radio" name="dstyle-${b.id}" value="photo"><span><b>Photo style</b>Realistic places and objects. No people. Marked as AI on YouTube.</span></label>
+    </div>
+    <label>What should it show?</label>
     <input type="text" class="v-prompt" value="${esc(suggestion)}" maxlength="160" required
-      placeholder="An idea, not a real thing: “a phone splitting in two”, “a tangle of supply lines”">
-    <p class="v-hint">Drawn in the channel's ink style. No names, brands or years: AI never draws real people or products.</p>
+      placeholder="“a phone splitting in two”, “robot arms on an empty assembly line at night”">
+    <p class="v-hint">No names, brands or years: AI never shows a real person, product or event.</p>
     <div class="v-drawbtns"><button class="btn btn-primary" type="submit">✦ Draw this</button><button class="btn btn-quiet" type="button" data-act="close-draw">Cancel</button></div>
   </form>`;
 }
@@ -1144,6 +1148,7 @@ function youtubeTab() {
       <div class="yt-field"><span class="yt-k">Title <small>${info.title.length}/100</small></span><div class="yt-copyrow"><input type="text" readonly value="${esc(info.title)}"><button class="btn btn-quiet" data-act="yt-copy" data-copy="title">Copy</button></div></div>
       <div class="yt-field"><span class="yt-k">Description</span><textarea readonly class="autosize" rows="4">${esc(info.description)}</textarea><button class="btn btn-quiet yt-copy-under" data-act="yt-copy" data-copy="description">Copy description</button></div>
       <div class="yt-field"><span class="yt-k">Tags</span><div class="yt-copyrow"><input type="text" readonly value="${esc(info.tags.join(", "))}"><button class="btn btn-quiet" data-act="yt-copy" data-copy="tags">Copy</button></div></div>
+      ${info.synthetic ? `<p class="hint yt-synth">Uses AI photo-style images, so it's marked as altered or synthetic content on YouTube (their rule for realistic AI imagery). Uploading by hand? Tick that box in YouTube Studio too.</p>` : ""}
       ${acct.connected && u.state !== "done" ? `<div class="yt-send">
         <label>Visibility <select class="yt-privacy">
           <option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option></select></label>
@@ -1649,11 +1654,12 @@ document.addEventListener("submit", async (e) => {
   e.preventDefault();
   const id = form.closest("[data-beat]").dataset.beat;
   const prompt = form.querySelector(".v-prompt").value.trim();
+  const style = form.querySelector(".v-style input:checked")?.value || "ink";
   const btn = form.querySelector("[type=submit]");
   btn.disabled = true;
   try {
     state.ep = await api(`/api/episodes/${encodeURIComponent(state.ep.slug)}/visuals/illustrate`,
-      { method: "POST", body: { prompts: { [id]: prompt } } });
+      { method: "POST", body: { prompts: { [id]: prompt }, styles: { [id]: style } } });
     state.drawOpen = null;
     state.episodes = await api("/api/episodes");
     await poll();

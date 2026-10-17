@@ -569,6 +569,7 @@ def _unapprove_visuals(ep: Episode) -> None:
 class IllustrateBody(BaseModel):
     beats: list[str] | None = None
     prompts: dict[str, str] | None = None  # {beat_id: your wording}, for drawing one picture at a time
+    styles: dict[str, str] | None = None   # {beat_id: "ink" | "photo"}; ink when left out
 
 
 @app.post("/api/episodes/{slug}/visuals/illustrate")
@@ -584,6 +585,7 @@ def request_illustrations(slug: str, body: IllustrateBody):
 
     beats = {b["id"]: b for b in manifest["beats"]}
     prompts = {k: v.strip() for k, v in (body.prompts or {}).items()}
+    styles = {k: "photo" for k, v in (body.styles or {}).items() if v == "photo" and k in prompts}
     wanted = list(dict.fromkeys((body.beats or []) + list(prompts)))
     if not wanted and job.get("state") == "queued":  # "Illustrate all" again just nudges the worker
         _nudge_worker("illustrate", slug)
@@ -593,7 +595,12 @@ def request_illustrations(slug: str, body: IllustrateBody):
         b = beats.get(bid)
         if not b:
             raise HTTPException(404, f"No beat {bid}.")
-        ok, why = illustrate.check_prompt(prompts[bid]) if bid in prompts else illustrate.eligible(b["type"], b["query"])
+        if bid in styles:
+            ok, why = illustrate.check_photo_prompt(prompts[bid])
+        elif bid in prompts:
+            ok, why = illustrate.check_prompt(prompts[bid])
+        else:
+            ok, why = illustrate.eligible(b["type"], b["query"])
         if not ok:
             raise HTTPException(422, why)
     if not wanted:
@@ -602,7 +609,8 @@ def request_illustrations(slug: str, body: IllustrateBody):
     if job.get("state") == "queued":  # add to the batch that's waiting instead of replacing it
         wanted = list(dict.fromkeys((job.get("beats") or []) + wanted))
         prompts = {**(job.get("prompts") or {}), **prompts}
-    meta["illustrate"] = {"state": "queued", "beats": wanted, "prompts": prompts,
+        styles = {**{k: v for k, v in (job.get("styles") or {}).items() if k not in prompts or k in styles}, **styles}
+    meta["illustrate"] = {"state": "queued", "beats": wanted, "prompts": prompts, "styles": styles,
                           "requested_at": job.get("requested_at") if job.get("state") == "queued"
                           else datetime.now(timezone.utc).isoformat()}
     ep.write("meta.json", meta)

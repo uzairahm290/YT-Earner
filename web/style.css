@@ -693,3 +693,10 @@ a.btn-primary { color: var(--cue-ink); }
 .yt-send select, .yt-send input { font: 14px/1.2 var(--sans); padding: 7px 9px; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); }
 .yt-done { margin: 10px 0 0; padding: 8px 10px; font-size: 14px; color: var(--ok); background: var(--ok-wash); border-radius: var(--r-sm); overflow-wrap: anywhere; }
 .yt-done a { color: inherit; font-weight: 600; }
+.v-styles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.v-style { display: flex; gap: 8px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--sheet); cursor: pointer;
+  font: 13px/1.35 var(--sans) !important; letter-spacing: 0 !important; text-transform: none !important; color: var(--graphite) !important; margin: 0 !important; }
+.v-style b { display: block; color: var(--ink); font-size: 14px; margin-bottom: 2px; }
+.v-style:has(input:checked) { border-color: var(--cue); box-shadow: inset 0 0 0 1px var(--cue); }
+.v-style input { margin-top: 3px; }
+.yt-synth { margin: 0 0 10px; padding: 7px 10px; background: var(--marker-wash); border-radius: var(--r-sm); }

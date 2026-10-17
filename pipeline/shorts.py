@@ -361,7 +361,8 @@ def _usable(beat: dict) -> list[dict]:
     if not cands:
         return []
     chosen = cands[beat.get("chosen", 0)] if beat.get("chosen", 0) < len(cands) else cands[0]
-    real = [c for c in cands if c["source"] != "card" and not c.get("needs_screenshot")]
+    # Alternates are real pictures only: an AI image goes into a Short only if you picked it.
+    real = [c for c in cands if c["source"] not in ("card", "ai") and not c.get("needs_screenshot")]
     order = [chosen] + [c for c in real if c is not chosen]
     return order
 

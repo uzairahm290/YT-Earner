@@ -181,8 +181,9 @@ def package(ep: Episode) -> dict:
     manifest = ep.read("visuals.json") or {}
     title = (script.get("chosen_title") or (script.get("title_options") or [meta.get("topic", "")])[0])[:100]
     cred = visuals.credits(manifest) if manifest else []
-    ai_used = any((b["candidates"][b["chosen"]] if b.get("candidates") else {}).get("source") == "ai"
-                  for b in manifest.get("beats", []))
+    picks = {b["id"]: (b["candidates"][b["chosen"]] if b.get("candidates") else {}) for b in manifest.get("beats", [])}
+    ai_used = any(p.get("source") == "ai" for p in picks.values())
+    photo_used = any(p.get("source") == "ai" and p.get("style") == "photo" for p in picks.values())
     marks = chapters(script, ep.read("voice/timings.json")) if script else []
     uploads = meta.get("upload") or {}
     long_url = (uploads.get("long") or {}).get("url")
@@ -193,12 +194,17 @@ def package(ep: Episode) -> dict:
     if cred:
         parts.append("Pictures\n" + "\n".join(cred))
     notes = ["Narrated with a synthetic voice (Kokoro)."]
-    if ai_used:
+    if photo_used:
+        notes.append("Some general scenes (places and objects, never people or real events) are AI-generated images; "
+                     "every picture of a real person, product or event is real.")
+    elif ai_used:
         notes.append("Some abstract illustrations were drawn with AI (Stable Diffusion XL); every photo of a real person, product or place is real.")
     parts.append(" ".join(notes))
     long = {"title": title, "description": "\n\n".join(p for p in parts if p)[:4900],
             "tags": _tags(script.get("tags", [])), "category": SCIENCE_AND_TECH,
-            "file": f"{ep.slug}.mp4", "ready": (meta.get("render") or {}).get("state") == "done"}
+            "file": f"{ep.slug}.mp4", "ready": (meta.get("render") or {}).get("state") == "done",
+            # YouTube's "altered or synthetic content" box: required for realistic AI images.
+            "synthetic": photo_used}
 
     out_shorts = {}
     data = shorts.load(ep) or {"items": []}
@@ -210,7 +216,11 @@ def package(ep: Episode) -> dict:
         s_title = (hook if len(hook) <= 90 else hook[:87].rsplit(" ", 1)[0] + "…") + " #Shorts"
         lines = [it["hook"].strip(), " ".join(ln["text"] for ln in it["lines"])[:600]]
         lines.append(f"Full story: {long_url}" if long_url else f"Full story: “{title}” on this channel.")
-        out_shorts[it["id"]] = {"title": s_title, "description": "\n\n".join(lines),
+        short_photo = any(picks.get(ln["beat"], {}).get("source") == "ai" and picks.get(ln["beat"], {}).get("style") == "photo"
+                          for ln in it["lines"])
+        if short_photo:
+            lines.append("Includes AI-generated scenes (places and objects only).")
+        out_shorts[it["id"]] = {"title": s_title, "description": "\n\n".join(lines), "synthetic": short_photo,
                                 "tags": _tags(script.get("tags", []), ["shorts"]), "category": SCIENCE_AND_TECH,
                                 "file": made[it["id"]]["file"], "ready": True}
     return {"long": long, "shorts": out_shorts}
@@ -253,7 +263,7 @@ def upload_video(path: Path, info: dict, privacy: str, publish_at: str | None, t
     if mock():
         return "mock" + re.sub(r"\W", "", path.stem)[-6:]
     status = {"privacyStatus": privacy, "selfDeclaredMadeForKids": False, "embeddable": True,
-              "containsSyntheticMedia": False}
+              "containsSyntheticMedia": bool(info.get("synthetic"))}
     if publish_at:
         status.update(privacyStatus="private", publishAt=publish_at)  # YouTube publishes it at that time
     body = {"snippet": {"title": info["title"], "description": info["description"], "tags": info["tags"],

@@ -89,7 +89,8 @@ class Plan(unittest.TestCase):
 
     def test_long_lines_are_cut_into_several_shots_rotating_pictures(self):
         beats = {"c0b01": {"id": "c0b01", "chosen": 0, "candidates": [
-            {"source": "commons", "url": "a"}, {"source": "commons", "url": "b"}, {"source": "card"}]}}
+            {"source": "commons", "url": "a"}, {"source": "ai", "url": "never"}, {"source": "commons", "url": "b"},
+            {"source": "card"}]}}
         spoken = [{"role": "line", "beat": "c0b01", "shot_start": 0.0, "shot_end": 7.0}]
         shots = shorts.plan_shots(spoken, beats)
         self.assertEqual(len(shots), 3)
