@@ -1068,7 +1068,7 @@ function shortsDesk() {
   const chosen = d.items.filter((it) => it.include);
   const est = (it) => {
     const w = [it.hook, ...it.lines.map((l) => l.text), it.outro].join(" ").trim().split(/\s+/).filter(Boolean).length;
-    return Math.round(w / (2.55 * 1.05) + 0.3 * (it.lines.length + 2));
+    return Math.round(w / 2.3 + 0.3 * (it.lines.length + 2));
   };
   const max = 58;
 

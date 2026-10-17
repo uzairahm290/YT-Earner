@@ -100,7 +100,7 @@ def units(item: dict) -> list[dict]:
 
 def estimate_seconds(item: dict) -> float:
     words = sum(len(u["text"].split()) for u in units(item))
-    return round(words / (2.55 * cfg()["speed"]) + 0.3 * len(units(item)), 1)
+    return round(words / (2.3 * cfg()["speed"] / 1.05) + 0.3 * len(units(item)), 1)  # measured: 142 words = 63 s
 
 
 def check(data: dict) -> list[str]:
