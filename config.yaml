@@ -94,6 +94,15 @@ voice:
   model_dir: ~/.cache/kokoro
   model_url: https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
 
+# Pictures for every beat. Real sources only, never AI images.
+visuals:
+  candidates_per_beat: 4       # options shown per beat in the dashboard
+  min_photo_width: 1000        # skip anything too small to fill a 1080p frame
+  # Commons files are only used under these licenses (credited in the description).
+  allowed_licenses: ["public domain", "pd", "cc0", "cc by", "cc-by"]
+  # Stock video kicks in when the matching key is set (PEXELS_API_KEY / PIXABAY_API_KEY).
+  stock_providers: [pexels, pixabay]
+
 # Phrases that scream "AI wrote this". Script lint fails if any show up.
 banned_phrases:
   - "in today's fast-paced world"
