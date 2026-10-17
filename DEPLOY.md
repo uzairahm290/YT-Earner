@@ -83,16 +83,31 @@ so it can never end up on the internet unprotected by accident.
 
 Every `git push` to `main` redeploys automatically.
 
-## 4. GitHub Actions: daily topics into the dashboard
+## 4. GitHub Actions: the worker and daily topics
+
+Narration (and later visuals and rendering) is too heavy for Render's free instance, so it runs on
+free GitHub Actions machines. The dashboard queues the job in Supabase; the **Production worker**
+workflow picks it up. It needs the database address to do that.
 
 Repo → **Settings → Secrets and variables → Actions → New repository secret**:
-- `DATABASE_URL`: the same Session pooler URI
-- `WIKI_USER_AGENT`: same as above
+- `DATABASE_URL`: the same Session pooler URI that's on Render
+- `WIKI_USER_AGENT`: `DocuPipeline/0.1 (contact: your-email@gmail.com)`
 
-Then **Actions → Daily topic shortlist → Run workflow** once to test. The shortlist should appear under
-**Topic ideas** in the dashboard.
+Then **Actions → Production worker → Run workflow** once. It should finish green with "0 queued".
+After that it checks for work every 10 minutes by itself, and the daily topic shortlist starts
+landing in the dashboard's Topic ideas.
 
----
+### Optional: start narration instantly
+
+Without this, a queued narration starts within ~15 minutes. With it, it starts immediately.
+
+1. github.com → your avatar → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
+2. Repository access: **Only select repositories → YT-Earner**
+3. Permissions → Repository permissions → **Actions: Read and write** (nothing else)
+4. Generate, copy, and add it on Render as `GITHUB_DISPATCH_TOKEN`
+
+GitHub pauses scheduled workflows in repos with no commits for 60 days. If narration stops
+getting picked up after a quiet stretch, open Actions and re-enable the workflow.
 
 ## When something's off
 
@@ -105,3 +120,5 @@ Then **Actions → Daily topic shortlist → Run workflow** once to test. The sh
 | Sign-in page loads forever | Render is waking up. Give it a minute |
 | "Research didn't finish" | Check Render's Logs tab. Usually a missing/wrong `GEMINI_API_KEY` or the free-tier rate limit |
 | Changing the password | Update `DESK_PASSWORD` on Render. Every device gets signed out |
+| Narration stuck on "queued" | Actions → Production worker: is it failing? Usually the `DATABASE_URL` secret is missing |
+| Narration failed | The error shows on the story page. The worker's log in Actions has the details |

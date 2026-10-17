@@ -6,7 +6,7 @@ That human step is what keeps the channel on the right side of YouTube's inauthe
 
 ```
 topics ─► research ─► script ─► voice ─► visuals ─► render ─► shorts ─► upload
-  ✅         ✅          ✅       next     next      next      next      next
+  ✅         ✅          ✅        ✅       next      next      next      next
 ```
 
 ## The dashboard
@@ -14,6 +14,7 @@ topics ─► research ─► script ─► voice ─► visuals ─► render �
 ```bash
 python app.py          # http://localhost:8000
 python app.py --demo   # sample data, no keys needed, good for a first look
+INLINE_WORKER=1 python app.py   # run narration inside the dashboard (pip install -r requirements-worker.txt)
 ```
 
 Everything runs from the Production Desk:
@@ -22,6 +23,7 @@ Everything runs from the Production Desk:
 - **Topic ideas**: today's shortlist, one click to start research.
 - **Fact sheet**: timeline, people, numbers with their sources, a checklist of claims to confirm, and a place to correct anything wrong.
 - **Script**: a two-column picture/narration paper edit. Running timecodes, shot type and search for each beat, lower thirds, pauses. AI phrases get marked in red as you type; numbers that aren't in the fact sheet get marked on save. Approve is locked until it's clean.
+- **Narration**: approving a script queues it for the narrator (Kokoro-82M, 7 voices to pick from). When it's done, every beat gets a play button and the script follows along as it plays. Edit the script and the recording is marked out of date.
 - **Shorts**: phone-shaped previews of each Short with its hook line.
 - **Title and thumbnail**: pick or write the title, thumbnail text and description.
 
@@ -36,6 +38,8 @@ To put it online behind a password (Render + Supabase, free), see **[DEPLOY.md](
 | Topics | `python cli.py topics` | shortlist from US tech RSS + Wikipedia traffic spikes |
 | Research | `python cli.py research "Nokia" --extra "Stephen Elop"` | `factsheet.md`: timeline, people, numbers, every fact tagged with its source, plus a ⚠️ verify list |
 | Script | `python cli.py script nokia --angle "..." --notes "..."` | `script.md` to read and edit, `script.json` for the next stages |
+| Voice | `python cli.py voice nokia --voice am_onyx` | one mastered MP3 (-16 LUFS) + start/end time of every beat |
+| Worker | `python cli.py worker` | runs whatever the dashboard queued; this is what GitHub Actions calls |
 
 The script is broken into **beats**: one beat = 1–3 sentences of narration plus the exact shot to cut to
 (real archive photo, stock B-roll, a document on screen, a chart, a map, a title card). It also flags
@@ -69,6 +73,8 @@ pipeline/
   research.py        Wikipedia → sourced fact sheet
   script.py          fact sheet → beats + visuals + Shorts picks, with lint
   llm.py             any OpenAI-compatible endpoint (Gemini / Groq / local)
+  voice.py           script → Kokoro narration → FFmpeg mastering → MP3 + beat timings
+  worker.py          job queue: claims queued episodes, runs them, records errors
   episode.py         per-video files + status
   store.py           where files live: episodes/ folder locally, Supabase when DATABASE_URL is set
 app.py               dashboard server (FastAPI) + login
@@ -76,5 +82,5 @@ render.yaml          Render blueprint
 web/                 dashboard frontend (plain HTML/CSS/JS, no build step)
 cli.py
 tests/               offline tests + fixtures (DOCU_MOCK_LLM=1 replays canned LLM replies)
-.github/workflows/   daily topic shortlist + tests
+.github/workflows/   production worker (every 10 min), daily topic shortlist, tests
 ```
