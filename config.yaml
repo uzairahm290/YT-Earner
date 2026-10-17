@@ -103,6 +103,26 @@ visuals:
   # Stock video kicks in when the matching key is set (PEXELS_API_KEY / PIXABAY_API_KEY).
   stock_providers: [pexels, pixabay]
 
+# AI illustrations for abstract beats only, generated on Kaggle's free GPU.
+# Never used for people, products, brands, maps or documents (see pipeline/illustrate.py).
+illustrate:
+  model: stabilityai/stable-diffusion-xl-base-1.0     # CreativeML OpenRAIL++-M, commercial use allowed
+  vae: madebyollin/sdxl-vae-fp16-fix
+  per_beat: 2                # options generated per beat
+  steps: 30
+  guidance: 6.0
+  width: 1344                # SDXL's native 16:9-ish size; scaled to 1080p at render
+  height: 768
+  kernel_slug: docu-illustrate
+  # One house style, so the AI frames look like a deliberate illustration series, never like photos.
+  style: >-
+    editorial ink illustration, bold confident linework, limited duotone palette of deep navy
+    and warm mustard yellow, subtle paper grain, generous negative space, minimalist composition,
+    flat shading, no text
+  negative: >-
+    photo, photograph, photorealistic, realistic, 3d render, text, letters, words, numbers, logo,
+    watermark, signature, brand, face close-up, portrait, celebrity, blurry, lowres
+
 # Final cut.
 render:
   width: 1920
