@@ -697,7 +697,8 @@ function visualsTab() {
   const timings = new Map((ep.voice?.beats || []).map((b) => [b.id, b]));
   const narration = new Map((ep.script?.chapters || []).flatMap((ch) => ch.beats.map((b) => [b.id, b.narration])));
   const stock = state.status.stock_video || [];
-  const drawing = ["queued", "running"].includes(ep.meta?.illustrate?.state);
+  const running_draw = ep.meta?.illustrate?.state === "running";
+  const queuedBeats = new Set(ep.meta?.illustrate?.state === "queued" ? ep.meta.illustrate.beats || [] : []);
   const rows = v.beats.filter((b) => !state.onlyNeeds || needsYou(b));
 
   return `
@@ -729,9 +730,10 @@ function visualsTab() {
             <div class="v-alts">
               ${b.candidates.map((alt, i) => `<button class="v-alt ${i === b.chosen ? "on" : ""}" data-act="pick-visual" data-i="${i}" aria-label="Use option ${i + 1}: ${esc(SOURCE_NAME[alt.source])}" title="${esc(alt.title || SOURCE_NAME[alt.source])}">${candidateThumb(alt)}</button>`).join("")}
               <button class="v-alt v-add" data-act="upload-visual" aria-label="Upload your own picture" title="Upload your own (screenshot or photo)">＋</button>
-              ${(v.illustratable || []).includes(b.id) && !drawing ? `<button class="v-alt v-add v-draw" data-act="illustrate-beat" aria-label="Draw an AI illustration for this beat" title="Draw an AI illustration (abstract beats only)">✦</button>` : ""}
+              ${running_draw ? "" : `<button class="v-alt v-add v-draw ${queuedBeats.has(b.id) ? "on" : ""}" data-act="open-draw" aria-label="Draw an AI illustration for this beat" title="${queuedBeats.has(b.id) ? "Queued to draw" : "Draw an AI illustration for this beat"}">✦</button>`}
               <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
             </div>
+            ${state.drawOpen === b.id ? drawForm(b) : ""}
             <div class="v-search">
               <input type="text" class="v-query" value="${esc(b.query)}" aria-label="Search words for this beat">
               <button class="btn btn-quiet" data-act="search-visual">Search</button>
@@ -748,6 +750,18 @@ function visualsTab() {
       <pre>${esc(v.credits.join("\n")) || "No credited sources used yet."}</pre>
       ${v.credits.length ? `<button class="btn" data-act="copy-credits">Copy credits</button>` : ""}
     </details>`;
+}
+
+function drawForm(b) {
+  const abstract = (state.ep.visuals?.illustratable || []).includes(b.id) || b.candidates.some((c) => c.source === "ai");
+  const suggestion = abstract ? b.query.replace(/\b(close up of|slow motion|stock footage|footage)\b/gi, "").replace(/\s+/g, " ").trim() : "";
+  return `<form class="v-drawform" data-act="draw-beat">
+    <label>What should the illustration show?</label>
+    <input type="text" class="v-prompt" value="${esc(suggestion)}" maxlength="160" required
+      placeholder="An idea, not a real thing: “a phone splitting in two”, “a tangle of supply lines”">
+    <p class="v-hint">Drawn in the channel's ink style. No names, brands or years: AI never draws real people or products.</p>
+    <div class="v-drawbtns"><button class="btn btn-primary" type="submit">✦ Draw this</button><button class="btn btn-quiet" type="button" data-act="close-draw">Cancel</button></div>
+  </form>`;
 }
 
 function illustrateButton(v) {
@@ -1284,9 +1298,16 @@ document.addEventListener("click", async (e) => {
         await navigator.clipboard.writeText(state.ep.visuals.credits.join("\n"));
         toast("Credits copied"); break;
 
-      case "illustrate":
-      case "illustrate-beat": {
-        const body = act === "illustrate-beat" ? { beats: [btn.closest("[data-beat]").dataset.beat] } : {};
+      case "open-draw": {
+        const id = btn.closest("[data-beat]").dataset.beat;
+        state.drawOpen = state.drawOpen === id ? null : id;
+        renderEpisode();
+        document.querySelector(`[data-beat="${id}"] .v-prompt`)?.focus();
+        break;
+      }
+      case "close-draw": state.drawOpen = null; renderEpisode(); break;
+      case "illustrate": {
+        const body = {};
         state.ep = await api(`/api/episodes/${slug}/visuals/illustrate`, { method: "POST", body });
         state.episodes = await api("/api/episodes");
         await poll();
@@ -1388,6 +1409,30 @@ function openNew(topic = "") {
   $("#newDialog").showModal();
   $("#newTopic").focus();
 }
+
+// One picture at a time: the ✦ form on a beat in the Pictures tab.
+document.addEventListener("submit", async (e) => {
+  const form = e.target.closest("form.v-drawform");
+  if (!form) return;
+  e.preventDefault();
+  const id = form.closest("[data-beat]").dataset.beat;
+  const prompt = form.querySelector(".v-prompt").value.trim();
+  const btn = form.querySelector("[type=submit]");
+  btn.disabled = true;
+  try {
+    state.ep = await api(`/api/episodes/${encodeURIComponent(state.ep.slug)}/visuals/illustrate`,
+      { method: "POST", body: { prompts: { [id]: prompt } } });
+    state.drawOpen = null;
+    state.episodes = await api("/api/episodes");
+    await poll();
+    lastWorkerCheck = 0;
+    toast(`Queued ${id} to draw. It'll appear as a new option on this beat.`);
+    renderEpisode();
+  } catch (err) {
+    btn.disabled = false;
+    toast(err.message, true);
+  }
+});
 
 $("#newStoryBtn").addEventListener("click", () => openNew());
 $("#newCancel").addEventListener("click", () => $("#newDialog").close());

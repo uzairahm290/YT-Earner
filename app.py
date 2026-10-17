@@ -525,6 +525,7 @@ def _unapprove_visuals(ep: Episode) -> None:
 
 class IllustrateBody(BaseModel):
     beats: list[str] | None = None
+    prompts: dict[str, str] | None = None  # {beat_id: your wording}, for drawing one picture at a time
 
 
 @app.post("/api/episodes/{slug}/visuals/illustrate")
@@ -534,32 +535,35 @@ def request_illustrations(slug: str, body: IllustrateBody):
     if not manifest:
         raise HTTPException(409, "Find pictures first.")
     meta = ep.read("meta.json")
-    state = (meta.get("illustrate") or {}).get("state")
-    if state == "running":
-        raise HTTPException(409, "Illustrations for this story are already being drawn.")
-    if state == "queued":  # pressing again just nudges a worker that hasn't picked it up
-        _nudge_worker("illustrate")
-        return get_episode(slug)
+    job = meta.get("illustrate") or {}
+    if job.get("state") == "running":
+        raise HTTPException(409, "Kaggle is drawing this story's batch right now. Try again when it finishes.")
+
     beats = {b["id"]: b for b in manifest["beats"]}
-    wanted = body.beats or illustrate.candidates_for(manifest)
+    prompts = {k: v.strip() for k, v in (body.prompts or {}).items()}
+    wanted = list(dict.fromkeys((body.beats or []) + list(prompts)))
+    if not wanted and job.get("state") == "queued":  # "Illustrate all" again just nudges the worker
+        _nudge_worker("illustrate", slug)
+        return get_episode(slug)
+    wanted = wanted or illustrate.candidates_for(manifest)
     for bid in wanted:
         b = beats.get(bid)
         if not b:
             raise HTTPException(404, f"No beat {bid}.")
-        ok, why = illustrate.eligible(b["type"], b["query"])
+        ok, why = illustrate.check_prompt(prompts[bid]) if bid in prompts else illustrate.eligible(b["type"], b["query"])
         if not ok:
-            raise HTTPException(422, f"{bid}: {why}")
+            raise HTTPException(422, why)
     if not wanted:
         raise HTTPException(409, "No beats here can be illustrated: they all show real people, products or documents.")
-    meta["illustrate"] = {"state": "queued", "beats": wanted,
-                          "requested_at": datetime.now(timezone.utc).isoformat()}
+
+    if job.get("state") == "queued":  # add to the batch that's waiting instead of replacing it
+        wanted = list(dict.fromkeys((job.get("beats") or []) + wanted))
+        prompts = {**(job.get("prompts") or {}), **prompts}
+    meta["illustrate"] = {"state": "queued", "beats": wanted, "prompts": prompts,
+                          "requested_at": job.get("requested_at") if job.get("state") == "queued"
+                          else datetime.now(timezone.utc).isoformat()}
     ep.write("meta.json", meta)
-    if INLINE_WORKER:
-        from pipeline import worker
-        start_job("illustrate", f"Drawing illustrations: {meta['topic']}",
-                  lambda: worker.run_jobs("illustrate"), slug=slug)
-    else:
-        _dispatch_worker()
+    _nudge_worker("illustrate", slug)
     return get_episode(slug)
 
 
@@ -575,7 +579,7 @@ def request_render(slug: str):
     if state == "running":
         raise HTTPException(409, "This video is already rendering.")
     if state == "queued":
-        _nudge_worker("render")
+        _nudge_worker("render", slug)
         return get_episode(slug)
     meta["render"] = {"state": "queued", "requested_at": datetime.now(timezone.utc).isoformat()}
     ep.write("meta.json", meta)
@@ -637,10 +641,10 @@ def _queue_voice(ep: Episode, voice_id: str | None) -> None:
         _dispatch_worker()
 
 
-def _nudge_worker(kind: str) -> None:
+def _nudge_worker(kind: str, slug: str | None = None) -> None:
     if INLINE_WORKER:
         from pipeline import worker
-        start_job(kind, f"Resuming queued {kind}", lambda: worker.run_jobs(kind))
+        start_job(kind, f"Running queued {kind}", lambda: worker.run_jobs(kind), slug=slug)
     else:
         _dispatch_worker()
 

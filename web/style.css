@@ -600,3 +600,19 @@ a.btn-primary { color: var(--cue-ink); }
 .v-badge.v-ai { left: auto; right: 6px; background: var(--marker); color: #10161c; font-weight: 700; }
 .v-alt .v-badge.v-ai { right: 3px; }
 .v-draw { color: #8a6533; border-color: var(--marker); }
+
+/* ✦ draw one picture: a typed note pinned under the beat */
+.v-draw.on { border-color: var(--marker); background: var(--marker-wash); }
+.v-drawform {
+  margin: 10px 0 4px; padding: 12px 14px;
+  border: 1px dashed var(--rule-strong); border-radius: var(--r-md); background: var(--paper);
+}
+.v-drawform label { display: block; font: 600 12px/1.3 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--graphite); margin-bottom: 6px; }
+.v-drawform .v-prompt {
+  width: 100%; box-sizing: border-box; padding: 8px 10px;
+  font: 15px/1.4 var(--type); color: var(--ink);
+  background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--r-sm);
+}
+.v-drawform .v-prompt:focus { outline: 2px solid var(--cue); outline-offset: 1px; }
+.v-drawform .v-hint { margin: 6px 0 10px; font-size: 12.5px; color: var(--faint); }
+.v-drawbtns { display: flex; gap: 8px; flex-wrap: wrap; }

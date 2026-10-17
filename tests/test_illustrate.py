@@ -103,6 +103,25 @@ class Flow(unittest.TestCase):
         self.assertNotIn("ai", [l for l in visuals.credits(m2) if "AI" in l])
         self.assertEqual(illustrate.candidates_for(m2), [])  # everything queued got drawn
 
+    def test_any_beat_can_be_drawn_from_your_own_wording_and_redraws_add_options(self):
+        m = self.ep.read("visuals.json")
+        real = next(b["id"] for b in m["beats"] if b["type"] == "archive_photo")
+        illustrate.run(SLUG, [real], {real: "a phone splitting in two"})
+        illustrate.run(SLUG, [real], {real: "two halves of a glass slab"})
+        b = next(b for b in self.ep.read("visuals.json")["beats"] if b["id"] == real)
+        ai = [c for c in b["candidates"] if c["source"] == "ai"]
+        self.assertEqual(len(ai), 2 * illustrate.cfg()["per_beat"])
+        self.assertEqual(len({c["file"] for c in ai}), len(ai))  # second draw didn't overwrite the first
+        self.assertTrue(ai[0]["prompt"].startswith("a phone splitting in two, "))
+
+    def test_your_wording_still_cannot_name_real_things(self):
+        for bad in ["iPhone Duo on a desk", "Tim Cook on stage", "the launch in 2026", "ab"]:
+            self.assertFalse(illustrate.check_prompt(bad)[0], bad)
+        m = self.ep.read("visuals.json")
+        real = next(b["id"] for b in m["beats"] if b["type"] == "archive_photo")
+        with self.assertRaises(illustrate.IllustrateError):
+            illustrate.run(SLUG, [real], {real: "Steve Jobs holding a phone"})
+
     def test_queue_cannot_smuggle_a_real_world_beat(self):
         m = self.ep.read("visuals.json")
         real = next(b["id"] for b in m["beats"] if b["type"] == "archive_photo")

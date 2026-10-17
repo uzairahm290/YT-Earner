@@ -101,7 +101,7 @@ def run_jobs(kind: str) -> tuple[int, int]:
         work = lambda slug, job: stage.run(slug, job.get("voice"))  # noqa: E731
     elif kind == "illustrate":
         from . import illustrate as stage
-        work = lambda slug, job: stage.run(slug, job.get("beats") or [])  # noqa: E731
+        work = lambda slug, job: stage.run(slug, job.get("beats") or [], job.get("prompts"))  # noqa: E731
     else:
         from . import render as stage
         work = lambda slug, job: stage.run(slug, progress=_progress(slug, "render"))  # noqa: E731

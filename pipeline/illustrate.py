@@ -59,6 +59,16 @@ def eligible(beat_type: str, query: str) -> tuple[bool, str]:
     return True, ""
 
 
+def check_prompt(text: str) -> tuple[bool, str]:
+    """A prompt you typed yourself, for any beat: still no names, brands or dates."""
+    if len(text.strip()) < 4:
+        return False, "Describe the idea in a few words."
+    if _PROPER.search(text) or re.search(r"\b(19|20)\d{2}\b", text):
+        return False, ("Leave out names, brands and years: describe the idea instead "
+                       "(\"a phone splitting in two\", not \"iPhone Duo\"). AI never draws real people or products.")
+    return True, ""
+
+
 def prompt_for(query: str) -> str:
     subject = re.sub(r"\b(stock footage|footage|b-roll|slow motion|fast motion|close up of|animation of|animated)\b",
                      "", query, flags=re.I)
@@ -245,13 +255,14 @@ def _demo_images(items: list[dict], out_dir: Path) -> dict:
 
 # ──────────────────────────── storing results ────────────────────────────
 
-def store(slug: str, images: dict[str, list[Path]]) -> int:
+def store(slug: str, images: dict[str, list[Path]], prompts: dict[str, str] | None = None) -> int:
     """Add the images to each beat as 'AI illustration' options. Doesn't change your picks."""
     ep = Episode.load(slug)
     m = ep.read("visuals.json")
     added = 0
     for b in m.get("beats", []):
-        for k, path in enumerate(images.get(b["id"], [])):
+        start = sum(1 for c in b["candidates"] if c["source"] == "ai")  # a redraw adds, never replaces
+        for k, path in enumerate(images.get(b["id"], []), start=start):
             file = f"visuals/ai/{b['id']}-{k}.b64"
             ep.write(file, "image/jpeg;" + base64.b64encode(path.read_bytes()).decode())
             b["candidates"] = [c for c in b["candidates"] if c.get("file") != file]
@@ -260,7 +271,8 @@ def store(slug: str, images: dict[str, list[Path]]) -> int:
             b["candidates"].insert(card_at, {
                 "source": "ai", "kind": "image", "file": file,
                 "title": "AI illustration", "credit": "AI illustration (SDXL)",
-                "license": "CreativeML OpenRAIL++-M", "prompt": prompt_for(b["query"]),
+                "license": "CreativeML OpenRAIL++-M",
+                "prompt": (prompts or {}).get(b["id"]) or prompt_for(b["query"]),
             })
             if b["chosen"] >= card_at:
                 b["chosen"] += 1  # keep pointing at the same option you had picked
@@ -269,25 +281,36 @@ def store(slug: str, images: dict[str, list[Path]]) -> int:
     return added
 
 
-def run(slug: str, beat_ids: list[str]) -> dict:
+def run(slug: str, beat_ids: list[str], prompts: dict[str, str] | None = None) -> dict:
+    """prompts: {beat_id: your own wording} for beats you drew one at a time from the Pictures tab."""
     ep = Episode.load(slug)
     m = ep.read("visuals.json") or {}
     beats = {b["id"]: b for b in m.get("beats", [])}
-    items = []
+    prompts = prompts or {}
+    items, used = [], {}
     for i, bid in enumerate(beat_ids):
         b = beats.get(bid)
         if not b:
             continue
-        ok, _ = eligible(b["type"], b["query"])
-        if ok:  # re-checked here: the queue can't be used to slip a real-world beat through
-            items.append({"id": bid, "prompt": prompt_for(b["query"]), "seed": 1000 + i * 17})
+        # Re-checked here: the queue can't be used to slip a real-world beat or a named prompt through.
+        if bid in prompts:
+            if not check_prompt(prompts[bid])[0]:
+                continue
+            prompt = f"{prompts[bid].strip()}, {cfg()['style'].strip()}"
+        elif eligible(b["type"], b["query"])[0]:
+            prompt = prompt_for(b["query"])
+        else:
+            continue
+        drawn_before = sum(1 for c in b["candidates"] if c["source"] == "ai")
+        items.append({"id": bid, "prompt": prompt, "seed": 1000 + i * 17 + drawn_before * 101})
+        used[bid] = prompt
     if not items:
         raise IllustrateError("None of those beats can be illustrated.")
     started = time.time()
     print(f"[illustrate] {ep.read('meta.json')['topic']}: {len(items)} beats")
     with tempfile.TemporaryDirectory() as tmp:
         images = run_on_kaggle(items, Path(tmp))
-        added = store(slug, images)
+        added = store(slug, images, used)
     meta = ep.read("meta.json")
     meta["illustrate"] = {**(meta.get("illustrate") or {}), "state": "done", "added": added,
                           "seconds_taken": round(time.time() - started)}
