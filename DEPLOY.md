@@ -52,22 +52,21 @@ python cli.py list           # "No episodes yet." = connected
 python cli.py push-local     # optional: copy stories you already made locally into Supabase
 ```
 
-## 2. GitHub: push the repo
+## 2. GitHub: the repo
+
+Already done: the code lives at **github.com/uzairahm290/YT-Earner**.
+To work on it from your Mac:
 
 ```bash
-cd docu-pipeline
-git remote add origin https://github.com/<you>/docu-pipeline.git
-git push -u origin main
+git clone https://github.com/uzairahm290/YT-Earner.git
+cd YT-Earner
+cp .env.example .env    # fill in your keys; .env is gitignored and never gets pushed
 ```
-Create the empty repo on github.com first (no README, no .gitignore, since the repo already has them).
-Public or private both work with Render. Public gets unlimited free GitHub Actions minutes.
-
-Check that `.env` is **not** in the repo (it's in `.gitignore`). Your keys go into Render, never into git.
 
 ## 3. Render: the server
 
 1. **render.com** → sign in with GitHub.
-2. **New → Blueprint** → pick the `docu-pipeline` repo. Render finds `render.yaml` and shows one service, `production-desk`.
+2. **New → Blueprint** → pick the `YT-Earner` repo. Render finds `render.yaml` and shows one service, `production-desk`.
 3. It asks for four values:
 
    | Key | Value |

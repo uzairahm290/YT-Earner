@@ -10,7 +10,8 @@ start them (some take a few days to approve).
 ### 1. Python environment (Mac)
 
 ```bash
-cd docu-pipeline
+git clone https://github.com/uzairahm290/YT-Earner.git
+cd YT-Earner
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
