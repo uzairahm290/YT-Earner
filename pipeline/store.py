@@ -8,6 +8,7 @@ named text files per episode (meta.json, factsheet.json, script.json, ...).
 """
 from __future__ import annotations
 
+import os
 import shutil
 import threading
 from functools import lru_cache
@@ -29,7 +30,10 @@ class FileStore:
     def write(self, slug: str, name: str, text: str) -> None:
         p = self.root / slug / name
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8")
+        # Write then rename, so a reader on another thread never sees a half-written file.
+        tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, p)
 
     def exists(self, slug: str) -> bool:
         return (self.root / slug).is_dir()
@@ -48,7 +52,7 @@ class FileStore:
     def files(self, slug: str) -> dict[str, str]:
         base = self.root / slug
         return {str(p.relative_to(base)): p.read_text(encoding="utf-8")
-                for p in base.rglob("*") if p.is_file()} if base.exists() else {}
+                for p in base.rglob("*") if p.is_file() and not p.name.endswith(".tmp")} if base.exists() else {}
 
     def delete(self, slug: str) -> None:
         shutil.rmtree(self.root / slug, ignore_errors=True)
