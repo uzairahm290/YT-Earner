@@ -73,6 +73,7 @@ def build(script: dict, topic: str) -> dict:
 def short_label(topic: str) -> str:
     """The small title at the top of every Short: the subject, not a sentence."""
     t = re.sub(r"^(all the news about|the story of|how|why|what)\s+", "", topic.strip(), flags=re.I)
+    t = re.sub(r"^(the|a|an)\s+", "", t, flags=re.I)
     return t[:40].strip(" .,:;-").title() if t.islower() else t[:40].strip(" .,:;-")
 
 
