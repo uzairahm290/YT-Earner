@@ -71,7 +71,10 @@ const STATUS_TEXT = {
   verified: "Ready for a script",
   scripted: "Script to review",
   approved: "Approved",
+  voiced: "Voice ready",
 };
+
+const VOICE_LINE = { queued: "Waiting for the narrator", running: "Narrating…", error: "Narration failed" };
 
 function statusOrder() {
   return ["new", ...state.status.stages.map((s) => s.status)];
@@ -81,7 +84,8 @@ const rank = (status) => Math.max(0, statusOrder().indexOf(status));
 function epLine(e) {
   if (e.running) return e.status === "new" ? "Researching…" : "Working…";
   if (e.status === "researched" && e.verify_total) return `${e.verify_done} of ${e.verify_total} facts checked`;
-  if (e.status === "scripted" || e.status === "approved") return `${STATUS_TEXT[e.status]}${e.est_minutes ? ` · ${e.est_minutes} min` : ""}`;
+  if (e.status === "approved" && VOICE_LINE[e.voice_state]) return VOICE_LINE[e.voice_state];
+  if (["scripted", "approved", "voiced"].includes(e.status)) return `${STATUS_TEXT[e.status]}${e.est_minutes ? ` · ${e.est_minutes} min` : ""}`;
   return STATUS_TEXT[e.status] || e.status;
 }
 
@@ -179,7 +183,28 @@ async function poll() {
       state.episodes = await api("/api/episodes");
       if (JSON.stringify(state.episodes.map((e) => e.running)) !== before) { renderRail(); if (parseRoute().view !== "episode") render(); }
     }
+    await watchVoice();
   } catch { /* server restarting; try again next tick */ }
+}
+
+// Narration runs on the GitHub worker, not in this server's job list, so check its state from the episode list.
+let lastVoiceCheck = 0;
+async function watchVoice() {
+  const waiting = state.episodes.some((e) => ["queued", "running"].includes(e.voice_state));
+  if (!waiting || Date.now() - lastVoiceCheck < 8000) return;
+  lastVoiceCheck = Date.now();
+  const before = new Map(state.episodes.map((e) => [e.slug, e.voice_state]));
+  state.episodes = await api("/api/episodes");
+  const changed = state.episodes.filter((e) => before.get(e.slug) !== e.voice_state);
+  if (!changed.length) return;
+  renderRail();
+  for (const e of changed) {
+    if (e.voice_state === "done") toast(`Narration ready: ${e.topic}`);
+    if (e.voice_state === "error") toast(`Narration failed: ${e.topic}`, true);
+  }
+  const route = parseRoute();
+  if (route.view === "episode" && changed.some((e) => e.slug === route.slug) && !state.dirty) await loadEpisode(route.slug, true);
+  else if (route.view === "desk") render();
 }
 
 // ───────────────────────── routing ─────────────────────────
@@ -198,7 +223,7 @@ window.addEventListener("hashchange", async () => {
     history.replaceState(null, "", currentHash);
     return;
   }
-  if (leavingEpisode) state.dirty = false;
+  if (leavingEpisode) { state.dirty = false; stopAudio(); }
   currentHash = location.hash;
   $("#rail").classList.remove("open");
   await route();
@@ -256,9 +281,11 @@ function renderDesk() {
     { title: "Check the facts", what: "Tick off each flagged claim before it goes in a script.", match: (e) => e.status === "researched" },
     { title: "Write the script", what: "Facts are solid. Pick an angle and write it.", match: (e) => e.status === "verified" },
     { title: "Review and approve", what: "Read it out loud, fix what sounds off, approve.", match: (e) => e.status === "scripted" },
-    { title: "Approved", what: "Waiting for the voice stage, which comes next.", match: (e) => e.status === "approved" },
+    { title: "Narration", what: "Approved scripts get recorded by the narrator.", match: (e) => e.status === "approved" },
+    { title: "Voice ready", what: "Listen through. Visuals are the next stage.", match: (e) => e.status === "voiced" },
   ];
-  const needYou = eps.filter((e) => ["researched", "verified", "scripted"].includes(e.status) && !e.running).length;
+  const needYou = eps.filter((e) => !e.running && (["researched", "verified", "scripted", "voiced"].includes(e.status)
+    || (e.status === "approved" && ["error", "cancelled", undefined, null].includes(e.voice_state)))).length;
 
   if (!eps.length) {
     $("#main").innerHTML = `
@@ -382,15 +409,48 @@ function nextStep(ep, running, flags) {
       const msg = state.dirty ? "<strong>You have unsaved edits.</strong> Save them to re-check the script."
         : ep.lint?.ok ? "<strong>Read it out loud.</strong> Fix anything that sounds off, then approve it for voice and visuals."
         : `<strong>${flags.size} ${flags.size === 1 ? "beat has" : "beats have"} problems marked in red.</strong> Fix them and save to approve.`;
-      return box(msg, `<button class="btn btn-approve" data-act="approve" ${ok ? "" : "disabled"}>Approve script</button>`);
+      return box(msg, `${voicePick()}<button class="btn btn-approve" data-act="approve" ${ok ? "" : "disabled"}>Approve and narrate</button>`);
     }
-    case "approved":
-      return box(`<strong>Approved.</strong> Voice is the next stage to be built; this story will be first in line for it.`,
-        `<button class="btn" data-act="unapprove">Reopen for edits</button>`);
+    case "approved": {
+      const job = ep.meta?.voice || {};
+      if (job.state === "queued") {
+        const when = state.status.worker === "every 10 minutes"
+          ? "The narrator checks for work every 10 minutes, so it starts within about 15."
+          : "The narrator is starting now.";
+        return box(`<strong>Queued for narration with ${esc(voiceName(job.voice))}.</strong> ${when} You can close this page.`,
+          `<button class="btn" data-act="cancel-voice">Cancel</button>`);
+      }
+      if (job.state === "running") {
+        return box(`<strong>Recording the narration with ${esc(voiceName(job.voice))}…</strong> About 5 minutes for a 14-minute script. This page updates when it's done.`);
+      }
+      if (job.state === "error") {
+        return box(`<strong>Narration failed.</strong> ${esc(job.error || "")}`,
+          `${voicePick()}<button class="btn btn-primary" data-act="record-voice">Try again</button>`);
+      }
+      return box(`<strong>Approved.</strong> Record the narration when you're ready.`,
+        `${voicePick()}<button class="btn btn-primary" data-act="record-voice">Record narration</button>
+         <button class="btn" data-act="unapprove">Reopen for edits</button>`);
+    }
+    case "voiced": {
+      const v = ep.voice || {};
+      return box(`<strong>Narration recorded:</strong> ${clock(v.duration || 0)} with ${esc(voiceName(v.voice))}. Listen through on the Script tab; each beat has its own play button. Visuals are the next stage.`,
+        `${voicePick()}<button class="btn" data-act="record-voice">Re-record</button>
+         <button class="btn" data-act="unapprove">Reopen for edits</button>`);
+    }
     default:
       return "";
   }
   function box(text, actions = "") { return `<div class="next-step"><p>${text}</p>${actions}</div>`; }
+}
+
+function voiceName(id) { return (state.status.voices || {})[id] || id || "the default voice"; }
+
+function voicePick() {
+  const cur = state.ep?.meta?.voice?.voice || state.status.voice_default;
+  return `<label class="voice-pick"><span class="sr-only">Narrator voice</span>
+    <select id="voicePick" aria-label="Narrator voice">
+      ${Object.entries(state.status.voices || {}).map(([k, v]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(v)}</option>`).join("")}
+    </select></label>`;
 }
 
 function renderTab() {
@@ -527,8 +587,77 @@ function scriptBar() {
     </div>
     <button class="btn" data-act="discard" ${state.dirty ? "" : "hidden"}>Discard</button>
     <button class="btn btn-primary" data-act="save-script" id="saveBtn" ${state.dirty ? "" : "disabled"}>Save changes</button>
+    ${playerBar()}
   </div>`;
 }
+
+// ───── narration playback ─────
+// One MP3 per story. Each beat's play button seeks into it and stops at the beat's end.
+
+const ICON_PLAY = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3v10l8-5z" fill="currentColor"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3h2.5v10H4.5zM9 3h2.5v10H9z" fill="currentColor"/></svg>';
+const audio = { el: null, key: null, stopAt: null, loading: null };
+
+function voiceKey() { const v = state.ep?.voice; return v ? `${state.ep.slug}:${v.duration}:${v.voice}:${state.ep.meta?.voice?.finished_at}` : null; }
+function beatTimings() {
+  const v = state.ep?.voice;
+  return v && !v.stale && !state.dirty ? new Map(v.beats.map((b) => [b.id, b])) : new Map();
+}
+
+function playerBar() {
+  const v = state.ep?.voice;
+  if (!v) return "";
+  const playing = audio.el && !audio.el.paused && audio.key === voiceKey();
+  return `<div class="player" id="player">
+    <button class="play-all" data-act="play-all" aria-label="${playing ? "Pause" : "Play"} narration">${playing ? ICON_PAUSE : ICON_PLAY}</button>
+    <span class="p-time"><b id="pNow">${clock(audio.key === voiceKey() && audio.el ? audio.el.currentTime : 0)}</b> / ${clock(v.duration)}</span>
+    <span class="p-voice">${esc(voiceName(v.voice))}</span>
+    ${v.stale || state.dirty ? `<span class="p-stale">Script changed since this recording. Approve again to re-record.</span>` : ""}
+  </div>`;
+}
+
+async function ensureAudio() {
+  const key = voiceKey();
+  if (audio.el && audio.key === key) return audio.el;
+  if (audio.loading?.key === key) return audio.loading.promise;
+  const promise = (async () => {
+    const res = await fetch(`/api/episodes/${encodeURIComponent(state.ep.slug)}/audio`);
+    if (!res.ok) throw new Error("Couldn't load the narration.");
+    const url = URL.createObjectURL(await res.blob());  // a blob seeks reliably, no range requests needed
+    if (audio.el) { audio.el.pause(); URL.revokeObjectURL(audio.el.src); }
+    const el = new Audio(url);
+    el.addEventListener("timeupdate", onAudioTime);
+    el.addEventListener("play", syncPlayButton);
+    el.addEventListener("pause", () => { syncPlayButton(); markSpeaking(null); });
+    Object.assign(audio, { el, key, stopAt: null, loading: null });
+    return el;
+  })();
+  audio.loading = { key, promise };
+  return promise;
+}
+
+function onAudioTime() {
+  const el = audio.el;
+  if (audio.stopAt != null && el.currentTime >= audio.stopAt) { el.pause(); audio.stopAt = null; return; }
+  const now = $("#pNow"); if (now) now.textContent = clock(el.currentTime);
+  const hit = (state.ep?.voice?.beats || []).find((b) => el.currentTime >= b.start && el.currentTime < b.end + 0.3);
+  markSpeaking(hit && beatTimings().size ? hit.id : null);
+}
+
+function markSpeaking(id) {
+  $$("#paper .beat.speaking").forEach((r) => { if (r.dataset.id !== id) r.classList.remove("speaking"); });
+  if (id) $(`#paper .beat[data-id="${id}"]`)?.classList.add("speaking");
+}
+
+function syncPlayButton() {
+  const btn = $('[data-act="play-all"]');
+  if (!btn) return;
+  const playing = audio.el && !audio.el.paused;
+  btn.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
+  btn.setAttribute("aria-label", `${playing ? "Pause" : "Play"} narration`);
+}
+
+function stopAudio() { if (audio.el) audio.el.pause(); }
 
 function scriptTab() {
   const ep = state.ep;
@@ -540,6 +669,7 @@ function scriptTab() {
   const flags = beatFlags();
   const issues = (ep.lint?.issues || []).filter((x) => !x.startsWith("Length"));
   const lengthNote = (ep.lint?.issues || []).find((x) => x.startsWith("Length"));
+  const timings = beatTimings();
   let t = 0;
 
   return `
@@ -559,8 +689,10 @@ function scriptTab() {
           const id = beatId(ci, bi);
           const start = t; t += beatSeconds(b);
           const f = flags.get(id) || [];
-          return `<div class="beat ${f.length ? "flagged" : ""}" data-ci="${ci}" data-bi="${bi}">
-            <div class="tc"><span class="start">${clock(start)}</span><span class="id">${id}</span></div>
+          const spoken = timings.get(id);
+          return `<div class="beat ${f.length ? "flagged" : ""}" data-ci="${ci}" data-bi="${bi}" data-id="${id}">
+            <div class="tc"><span class="start">${clock(spoken ? spoken.start : start)}</span><span class="id">${id}</span>
+              ${spoken ? `<button class="beat-play" data-act="play-beat" data-id="${id}" aria-label="Play beat ${id}" title="Play this beat">${ICON_PLAY}</button>` : ""}</div>
             <div class="pic">
               <select data-field="vtype" style="--vcolor: var(--v-${b.visual.type})" aria-label="Shot type">
                 ${Object.entries(VISUALS).map(([k, v]) => `<option value="${k}" ${k === b.visual.type ? "selected" : ""}>${v}</option>`).join("")}
@@ -832,9 +964,38 @@ document.addEventListener("click", async (e) => {
         state.draft = structuredClone(state.ep.script); state.dirty = false; renderEpisode(); break;
 
       case "approve":
-        state.ep = await api(`/api/episodes/${slug}/approve`, { method: "POST" });
+        state.ep = await api(`/api/episodes/${slug}/approve`, { method: "POST", body: { voice: $("#voicePick")?.value } });
         state.episodes = await api("/api/episodes");
-        toast("Script approved"); render(); break;
+        await poll();
+        toast("Approved. Narration queued."); render(); break;
+
+      case "record-voice":
+        stopAudio();
+        state.ep = await api(`/api/episodes/${slug}/voice`, { method: "POST", body: { voice: $("#voicePick")?.value } });
+        state.episodes = await api("/api/episodes");
+        await poll();
+        toast("Narration queued"); render(); break;
+
+      case "cancel-voice":
+        state.ep = await api(`/api/episodes/${slug}/voice/cancel`, { method: "POST" });
+        state.episodes = await api("/api/episodes"); render(); break;
+
+      case "play-all": {
+        const el = await ensureAudio();
+        audio.stopAt = null;
+        if (el.paused) await el.play(); else el.pause();
+        break;
+      }
+
+      case "play-beat": {
+        const b = beatTimings().get(btn.dataset.id);
+        if (!b) return;
+        const el = await ensureAudio();
+        el.currentTime = b.start;
+        audio.stopAt = b.end + 0.15;
+        await el.play();
+        break;
+      }
 
       case "unapprove":
         state.ep = await api(`/api/episodes/${slug}/unapprove`, { method: "POST" });

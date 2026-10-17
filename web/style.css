@@ -185,7 +185,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--c
 /* ───────────── desk (home) ───────────── */
 
 .desk-head { margin-bottom: 36px; }
-.queue { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0; border-top: 2px solid var(--ink); }
+.queue { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0; border-top: 2px solid var(--ink); }
 .queue-col { padding: 14px 18px 18px 0; border-right: 1px solid var(--rule); }
 .queue-col + .queue-col { padding-left: 18px; }
 .queue-col:last-child { border-right: 0; }
@@ -468,4 +468,40 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--c
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+/* ───────────── narration ───────────── */
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.voice-pick select { width: auto; padding: 7px 10px; font-size: 14px; font-weight: 600; }
+
+/* The player sits on its own line under the stats, like a transport bar on a timeline. */
+.player {
+  flex: 1 0 100%; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-top: 8px; border-top: 1px dashed var(--rule); font-size: 14px;
+}
+.play-all {
+  width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer;
+  display: grid; place-items: center; background: var(--ink); color: var(--paper);
+}
+.play-all svg { width: 15px; height: 15px; }
+.p-time { font-variant-numeric: tabular-nums; }
+.p-voice { color: var(--graphite); }
+.p-stale { color: var(--grease); font-size: 13px; }
+
+.beat-play {
+  display: grid; place-items: center; width: 26px; height: 26px; margin-top: 8px;
+  border: 1px solid var(--rule-strong); border-radius: 50%; background: var(--sheet);
+  color: var(--ink); cursor: pointer;
+}
+.beat-play svg { width: 11px; height: 11px; margin-left: 1px; }
+.beat-play:hover { border-color: var(--ink); }
+
+/* Follow-along: the beat being spoken gets the cue color down its edge. */
+.beat.speaking { background: color-mix(in srgb, var(--cue) 7%, transparent); box-shadow: inset 3px 0 0 var(--cue); }
+.beat.speaking .beat-play { background: var(--cue); border-color: var(--cue); color: var(--cue-ink); }
+
+@media (max-width: 760px) {
+  .beat-play { margin: 0 0 0 auto; }
+  .beat .tc { display: flex; align-items: center; gap: 8px; }
 }
