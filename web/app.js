@@ -71,7 +71,8 @@ const STATUS_TEXT = {
   verified: "Ready for a script",
   scripted: "Script to review",
   approved: "Approved",
-  voiced: "Voice ready",
+  voiced: "Pick the pictures",
+  visuals_ready: "Ready to render",
 };
 
 const VOICE_LINE = { queued: "Waiting for the narrator", running: "Narrating…", error: "Narration failed" };
@@ -282,7 +283,8 @@ function renderDesk() {
     { title: "Write the script", what: "Facts are solid. Pick an angle and write it.", match: (e) => e.status === "verified" },
     { title: "Review and approve", what: "Read it out loud, fix what sounds off, approve.", match: (e) => e.status === "scripted" },
     { title: "Narration", what: "Approved scripts get recorded by the narrator.", match: (e) => e.status === "approved" },
-    { title: "Voice ready", what: "Listen through. Visuals are the next stage.", match: (e) => e.status === "voiced" },
+    { title: "Pick pictures", what: "Narration's done. Check the picture for every beat.", match: (e) => e.status === "voiced" },
+    { title: "Ready to render", what: "Waiting for the render stage, which comes next.", match: (e) => e.status === "visuals_ready" },
   ];
   const needYou = eps.filter((e) => !e.running && (["researched", "verified", "scripted", "voiced"].includes(e.status)
     || (e.status === "approved" && ["error", "cancelled", undefined, null].includes(e.voice_state)))).length;
@@ -367,6 +369,7 @@ function renderEpisode() {
     ["facts", "Fact sheet", ep.verify_total ? `${ep.verify_done}/${ep.verify_total}` : ""],
     ["script", "Script", lintCount ? `${lintCount} to fix` : ""],
     ["shorts", "Shorts", state.draft ? String(state.draft.shorts.length) : ""],
+    ["visuals", "Pictures", ep.visuals ? (ep.visuals.summary.needs_you ? `${ep.visuals.summary.needs_you} need you` : "✓") : ""],
     ["package", "Title and thumbnail", ""],
   ];
 
@@ -383,7 +386,7 @@ function renderEpisode() {
     <div class="tabs" role="tablist">
       ${tabs.map(([k, label, badge]) => `
         <button class="tab" role="tab" aria-selected="${state.tab === k}" data-tab="${k}">
-          ${label}${badge ? `<span class="badge ${k === "script" && lintCount ? "warn" : ""}">${badge}</span>` : ""}
+          ${label}${badge ? `<span class="badge ${(k === "script" && lintCount) || (k === "visuals" && ep.visuals?.summary.needs_you) ? "warn" : ""}">${badge}</span>` : ""}
         </button>`).join("")}
     </div>
     <section id="tabBody"></section>`;
@@ -418,10 +421,12 @@ function nextStep(ep, running, flags) {
           ? "The narrator checks for work every 10 minutes, so it starts within about 15."
           : "The narrator is starting now.";
         return box(`<strong>Queued for narration with ${esc(voiceName(job.voice))}.</strong> ${when} You can close this page.`,
-          `<button class="btn" data-act="cancel-voice">Cancel</button>`);
+          `${ep.visuals ? "" : `<button class="btn" data-act="find-visuals">Find pictures meanwhile</button>`}
+           <button class="btn" data-act="cancel-voice">Cancel</button>`);
       }
       if (job.state === "running") {
-        return box(`<strong>Recording the narration with ${esc(voiceName(job.voice))}…</strong> About 5 minutes for a 14-minute script. This page updates when it's done.`);
+        return box(`<strong>Recording the narration with ${esc(voiceName(job.voice))}…</strong> About 8 minutes for a 14-minute script. This page updates when it's done.`,
+          ep.visuals ? "" : `<button class="btn" data-act="find-visuals">Find pictures meanwhile</button>`);
       }
       if (job.state === "error") {
         return box(`<strong>Narration failed.</strong> ${esc(job.error || "")}`,
@@ -433,10 +438,20 @@ function nextStep(ep, running, flags) {
     }
     case "voiced": {
       const v = ep.voice || {};
-      return box(`<strong>Narration recorded:</strong> ${clock(v.duration || 0)} with ${esc(voiceName(v.voice))}. Listen through on the Script tab; each beat has its own play button. Visuals are the next stage.`,
-        `${voicePick()}<button class="btn" data-act="record-voice">Re-record</button>
-         <button class="btn" data-act="unapprove">Reopen for edits</button>`);
+      const said = `<strong>Narration recorded:</strong> ${clock(v.duration || 0)} with ${esc(voiceName(v.voice))}.`;
+      if (!ep.visuals) {
+        return box(`${said} Next, find a real picture for every beat.`,
+          `<button class="btn btn-primary" data-act="find-visuals">Find pictures</button>
+           ${voicePick()}<button class="btn" data-act="record-voice">Re-record</button>`);
+      }
+      const n = ep.visuals.summary.needs_you;
+      return box(`${said} ${n ? `<strong>${n} ${n === 1 ? "beat needs" : "beats need"} you</strong> on the Pictures tab: a real screenshot, or a better search.` : "Every beat has a picture. Look through them, then approve."}`,
+        `${state.tab !== "visuals" ? `<button class="btn" data-tab="visuals">Open pictures</button>` : ""}
+         <button class="btn btn-approve" data-act="approve-visuals">Approve pictures</button>`);
     }
+    case "visuals_ready":
+      return box(`<strong>Narration and pictures approved.</strong> Rendering the video is the next stage to be built; this story is first in line.`,
+        `<button class="btn" data-act="reopen-visuals">Change pictures</button>`);
     default:
       return "";
   }
@@ -458,6 +473,7 @@ function renderTab() {
   if (state.tab === "facts") body.innerHTML = factsTab();
   else if (state.tab === "script") body.innerHTML = scriptTab();
   else if (state.tab === "shorts") body.innerHTML = shortsTab();
+  else if (state.tab === "visuals") body.innerHTML = visualsTab();
   else body.innerHTML = packageTab();
   $$("textarea.autosize", body).forEach(autosize);
 }
@@ -590,6 +606,133 @@ function scriptBar() {
     ${playerBar()}
   </div>`;
 }
+
+// ───── pictures ─────
+// One row per beat: the chosen picture big, alternates beside it, search and upload right there.
+
+const SOURCE_NAME = { commons: "Wikimedia Commons", pexels: "Pexels", pixabay: "Pixabay", upload: "Your upload", card: "Card" };
+
+function candidateThumb(c, big = false) {
+  const slug = encodeURIComponent(state.ep.slug);
+  if (c.source === "card") return cardPreview(c, big);
+  const src = c.source === "upload" ? `/api/episodes/${slug}/uploads/${c.file.split("/").pop()}` : c.thumb;
+  if (big && c.kind === "video") {
+    return `<video class="v-media" src="${esc(c.url)}" poster="${esc(c.thumb || "")}" preload="none" muted controls playsinline></video>`;
+  }
+  return `<img class="v-media" src="${esc(src)}" alt="${esc(c.title || "")}" loading="lazy" referrerpolicy="no-referrer">
+    ${c.kind === "video" ? `<span class="v-badge">▶ ${c.duration ? `${c.duration}s` : "video"}</span>` : ""}`;
+}
+
+function cardPreview(c, big) {
+  if (c.card === "stat") return `<div class="v-card v-card-stat"><b>${esc(c.big)}</b><span>${esc(c.text)}</span></div>`;
+  if (c.card === "document") return `<div class="v-card v-card-doc"><span class="doc-tag">Document</span><b>${esc(c.text)}</b>${big ? `<span>${esc(c.sub || "")}</span>` : ""}</div>`;
+  if (c.card === "place") return `<div class="v-card v-card-place"><b>${esc(c.text)}</b></div>`;
+  return `<div class="v-card v-card-title"><b>${esc(c.text)}</b></div>`;
+}
+
+function visualsTab() {
+  const ep = state.ep;
+  const v = ep.visuals;
+  const running = state.jobs.some((j) => j.slug === ep.slug && j.kind === "visuals" && j.status === "running");
+  if (!["approved", "voiced", "visuals_ready"].includes(ep.status) && !v) {
+    return `<div class="empty"><h2>Approve the script first</h2><p>Pictures are found for the approved beats, one per beat.</p></div>`;
+  }
+  if (!v) {
+    return `<div class="empty"><h2>${running ? "Finding pictures…" : "No pictures yet"}</h2>
+      <p>${running ? "Searching Wikimedia Commons and stock libraries for every beat. Usually a minute or two." : "Finds real photos and footage for every beat, plus clean cards for figures and documents. Nothing AI-generated."}</p>
+      ${running ? "" : `<button class="btn btn-primary" data-act="find-visuals">Find pictures</button>`}</div>`;
+  }
+
+  const sum = v.summary;
+  const timings = new Map((ep.voice?.beats || []).map((b) => [b.id, b]));
+  const narration = new Map((ep.script?.chapters || []).flatMap((ch) => ch.beats.map((b) => [b.id, b.narration])));
+  const stock = state.status.stock_video || [];
+  const rows = v.beats.filter((b) => !state.onlyNeeds || needsYou(b));
+
+  return `
+    <div class="v-bar">
+      <div class="stats">
+        <span class="stat"><b>${sum.real}</b> real pictures</span>
+        <span class="stat"><b>${sum.cards}</b> cards</span>
+        <span class="stat ${sum.needs_you ? "warn" : ""}"><b>${sum.needs_you}</b> need you</span>
+      </div>
+      <label class="v-filter"><input type="checkbox" data-act="toggle-needs" ${state.onlyNeeds ? "checked" : ""}> Only beats that need you</label>
+      <button class="btn" data-act="find-visuals" ${running ? "disabled" : ""}>${running ? "Searching…" : "Search again"}</button>
+    </div>
+    ${stock.length ? "" : `<p class="v-note">Stock video is off. Add a free <code>PEXELS_API_KEY</code> on Render to get real footage for the B-roll beats; until then they use Commons photos.</p>`}
+    <ol class="v-list">
+      ${rows.map((b) => {
+        const c = b.candidates[b.chosen] || b.candidates[0];
+        const t = timings.get(b.id);
+        const flag = c.needs_screenshot ? "Add a screenshot of the real document (headline, filing, post) for this beat."
+          : b.missing ? "Nothing real found. Search with other words, or upload a photo you have the rights to use." : "";
+        return `<li class="v-row ${flag ? "v-needs" : ""}" data-beat="${b.id}">
+          <div class="v-main">${candidateThumb(c, true)}</div>
+          <div class="v-side">
+            <div class="v-head"><span class="v-id">${b.id}${t ? ` · ${clock(t.start)}` : ""}</span><span class="v-type" style="--vcolor: var(--v-${b.type})">${esc(VISUALS[b.type] || b.type)}</span></div>
+            <p class="v-say">${esc(narration.get(b.id) || "")}</p>
+            ${flag ? `<p class="v-flag">${flag}</p>` : ""}
+            <div class="v-alts">
+              ${b.candidates.map((alt, i) => `<button class="v-alt ${i === b.chosen ? "on" : ""}" data-act="pick-visual" data-i="${i}" aria-label="Use option ${i + 1}: ${esc(SOURCE_NAME[alt.source])}" title="${esc(alt.title || SOURCE_NAME[alt.source])}">${candidateThumb(alt)}</button>`).join("")}
+              <button class="v-alt v-add" data-act="upload-visual" aria-label="Upload your own picture" title="Upload your own (screenshot or photo)">＋</button>
+              <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            </div>
+            <div class="v-search">
+              <input type="text" class="v-query" value="${esc(b.query)}" aria-label="Search words for this beat">
+              <button class="btn btn-quiet" data-act="search-visual">Search</button>
+            </div>
+            <p class="v-credit">${c.source === "card" ? "Generated card, no credit needed" : `${esc(SOURCE_NAME[c.source])}${c.credit && c.source !== "upload" ? ` · ${esc(c.credit)}` : ""}${c.license && c.source !== "upload" ? ` · ${esc(c.license)}` : ""}${c.page ? ` · <a href="${esc(c.page)}" target="_blank" rel="noopener">source</a>` : ""}`}</p>
+            ${b.errors?.length ? `<p class="v-err">Search problem: ${esc(b.errors[0])}</p>` : ""}
+          </div>
+        </li>`;
+      }).join("")}
+    </ol>
+    ${state.onlyNeeds && !rows.length ? `<div class="lint-ok">Nothing needs you. Every beat has a real picture or a card you've accepted.</div>` : ""}
+    <details class="v-credits">
+      <summary>Credits for the description (${v.credits.length})</summary>
+      <pre>${esc(v.credits.join("\n")) || "No credited sources used yet."}</pre>
+      ${v.credits.length ? `<button class="btn" data-act="copy-credits">Copy credits</button>` : ""}
+    </details>`;
+}
+
+function needsYou(b) {
+  const c = b.candidates[b.chosen] || {};
+  return !!(c.needs_screenshot || b.missing);
+}
+
+// Shrink uploads in the browser so a phone screenshot doesn't become a 6 MB row.
+async function resizeImage(file, max = 1920) {
+  const img = await new Promise((ok, bad) => {
+    const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error("That file isn't an image this browser can read."));
+    i.src = URL.createObjectURL(file);
+  });
+  const scale = Math.min(1, max / img.width);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+  canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(img.src);
+  return canvas.toDataURL("image/jpeg", 0.86);
+}
+
+document.addEventListener("change", async (e) => {
+  const input = e.target;
+  if (input.type !== "file" || !input.closest("[data-beat]") || !input.files[0]) return;
+  const beat = input.closest("[data-beat]").dataset.beat;
+  try {
+    toast("Uploading…");
+    const data_url = await resizeImage(input.files[0]);
+    state.ep = await api(`/api/episodes/${state.ep.slug}/visuals/${beat}/upload`, { method: "POST", body: { data_url, name: input.files[0].name } });
+    toast("Picture added");
+    renderEpisode();
+  } catch (err) { toast(err.message, true); }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.classList?.contains("v-query")) {
+    e.preventDefault();
+    e.target.closest("[data-beat]").querySelector('[data-act="search-visual"]').click();
+  }
+});
 
 // ───── narration playback ─────
 // One MP3 per story. Each beat's play button seeks into it and stops at the beat's end.
@@ -896,12 +1039,17 @@ function shiftShorts(ci, fromBi, delta) {
   });
 }
 
+// Keep the address bar in step with the tab, so reloads and refreshes land on the same tab.
+function setTab(tab) {
+  state.tab = tab;
+  history.replaceState(null, "", `#/e/${state.ep.slug}/${tab}`);
+  currentHash = location.hash;
+}
+
 document.addEventListener("click", async (e) => {
   const tabBtn = e.target.closest("[data-tab]");
   if (tabBtn) {
-    state.tab = tabBtn.dataset.tab;
-    history.replaceState(null, "", `#/e/${state.ep.slug}/${state.tab}`);
-    currentHash = location.hash;
+    setTab(tabBtn.dataset.tab);
     renderEpisode();
     return;
   }
@@ -975,6 +1123,50 @@ document.addEventListener("click", async (e) => {
         state.episodes = await api("/api/episodes");
         await poll();
         toast("Narration queued"); render(); break;
+
+      case "find-visuals":
+        track(await api(`/api/episodes/${slug}/visuals`, { method: "POST" }));
+        setTab("visuals");
+        await poll(); renderEpisode(); break;
+
+      case "pick-visual": {
+        const row = btn.closest("[data-beat]");
+        state.ep = await api(`/api/episodes/${slug}/visuals/${row.dataset.beat}`, { method: "PUT", body: { choice: +btn.dataset.i } });
+        renderEpisode(); break;
+      }
+
+      case "search-visual": {
+        const row = btn.closest("[data-beat]");
+        const q = $(".v-query", row).value.trim();
+        if (!q) return;
+        btn.disabled = true; btn.textContent = "Searching…";
+        state.ep = await api(`/api/episodes/${slug}/visuals/${row.dataset.beat}`, { method: "PUT", body: { query: q } });
+        renderEpisode(); break;
+      }
+
+      case "upload-visual":
+        btn.closest("[data-beat]").querySelector("input[type=file]").click();
+        break;
+
+      case "approve-visuals": {
+        const n = state.ep.visuals?.summary.needs_you || 0;
+        if (n && !confirm(`${n} ${n === 1 ? "beat still uses a placeholder card" : "beats still use placeholder cards"} where a real screenshot or photo would be better. Approve anyway?`)) return;
+        state.ep = await api(`/api/episodes/${slug}/visuals/approve`, { method: "POST" });
+        state.episodes = await api("/api/episodes");
+        toast("Pictures approved"); render(); break;
+      }
+
+      case "reopen-visuals":
+        state.ep = await api(`/api/episodes/${slug}/visuals/${state.ep.visuals.beats[0].id}`, { method: "PUT", body: { choice: state.ep.visuals.beats[0].chosen } });
+        state.episodes = await api("/api/episodes");
+        setTab("visuals"); render(); break;
+
+      case "copy-credits":
+        await navigator.clipboard.writeText(state.ep.visuals.credits.join("\n"));
+        toast("Credits copied"); break;
+
+      case "toggle-needs":
+        state.onlyNeeds = !state.onlyNeeds; renderTab(); break;
 
       case "cancel-voice":
         state.ep = await api(`/api/episodes/${slug}/voice/cancel`, { method: "POST" });
