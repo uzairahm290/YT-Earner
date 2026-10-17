@@ -52,12 +52,7 @@ def fetch_wikipedia_trending(keywords: list[str], offline: bool = False) -> list
         top = json.loads((FIXTURES / "sample_pageviews.json").read_text())["items"][0]["articles"]
         descriptions = json.loads((FIXTURES / "sample_descriptions.json").read_text())
     else:
-        # Pageview data lands a day late, so look at yesterday.
-        day = datetime.now(timezone.utc) - timedelta(days=1)
-        url = PAGEVIEWS_TOP.format(y=day.strftime("%Y"), m=day.strftime("%m"), d=day.strftime("%d"))
-        resp = requests.get(url, headers={"User-Agent": user_agent()}, timeout=30)
-        resp.raise_for_status()
-        top = resp.json()["items"][0]["articles"]
+        top = _top_articles()
         titles = [a["article"] for a in top if not _SKIP.match(a["article"])][:150]
         descriptions = _describe(titles)
 
@@ -79,6 +74,26 @@ def fetch_wikipedia_trending(keywords: list[str], offline: bool = False) -> list
             "views": art["views"],
         })
     return trending
+
+
+def _top_articles() -> list[dict]:
+    """Most-read English Wikipedia articles for the latest day that has data.
+
+    Wikimedia publishes a day's numbers some hours after it ends (UTC), so in the
+    morning yesterday is often still a 404. Fall back a day at a time.
+    """
+    now = datetime.now(timezone.utc)
+    last_error = None
+    for back in (1, 2, 3):
+        day = now - timedelta(days=back)
+        url = PAGEVIEWS_TOP.format(y=day.strftime("%Y"), m=day.strftime("%m"), d=day.strftime("%d"))
+        resp = requests.get(url, headers={"User-Agent": user_agent()}, timeout=30)
+        if resp.status_code == 404:
+            last_error = f"no data yet for {day:%Y-%m-%d}"
+            continue
+        resp.raise_for_status()
+        return resp.json()["items"][0]["articles"]
+    raise requests.HTTPError(f"Wikipedia pageviews unavailable ({last_error})")
 
 
 def _describe(titles: list[str]) -> dict[str, str]:
