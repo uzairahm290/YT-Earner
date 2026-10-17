@@ -50,7 +50,7 @@ STAGES = [
     {"key": "approve", "label": "Approve script", "status": "approved", "built": True},
     {"key": "voice", "label": "Voice", "status": "voiced", "built": True},
     {"key": "visuals", "label": "Visuals", "status": "visuals_ready", "built": True},
-    {"key": "render", "label": "Render", "status": "rendered", "built": False},
+    {"key": "render", "label": "Render", "status": "rendered", "built": True},
     {"key": "shorts", "label": "Shorts", "status": "shorts_ready", "built": False},
     {"key": "upload", "label": "Upload", "status": "uploaded", "built": False},
 ]
@@ -198,6 +198,7 @@ def status():
         "voices": voice.voice_choices(),
         "voice_default": cfg["voice"]["default"],
         "stock_video": [p for p in ("pexels", "pixabay") if env(f"{p.upper()}_API_KEY")],
+        "preview_seconds": cfg["render"]["preview_seconds"],
         "worker": "inline" if INLINE_WORKER else ("instant" if _dispatch_ready() else "every 10 minutes"),
     }
 
@@ -238,6 +239,7 @@ def summarize(ep: Episode, files: dict | None = None) -> dict:
         "verify_done": len(meta.get("verify_checked", [])),
         "est_minutes": lint.get("est_minutes") if lint else None,
         "voice_state": (meta.get("voice") or {}).get("state"),
+        "render_state": (meta.get("render") or {}).get("state"),
         "running": any(j["slug"] == ep.slug and j["status"] == "running" for j in _jobs.values()),
     }
 
@@ -362,7 +364,7 @@ def save_script(slug: str, data: dict):
         where = " → ".join(str(p) for p in first["loc"])
         raise HTTPException(422, f"{where}: {first['msg']}")
     # Any edit after approval sends it back for another look (and a new narration).
-    if ep.read("meta.json")["status"] in ("approved", "voiced", "visuals_ready"):
+    if ep.read("meta.json")["status"] in ("approved", "voiced", "visuals_ready", "rendered"):
         ep.set_status("scripted")
     return get_episode(slug)
 
@@ -394,7 +396,7 @@ def unapprove(slug: str):
     if (meta.get("voice") or {}).get("state") in ("queued",):
         meta["voice"]["state"] = "cancelled"
         ep.write("meta.json", meta)
-    if meta["status"] in ("approved", "voiced", "visuals_ready"):
+    if meta["status"] in ("approved", "voiced", "visuals_ready", "rendered"):
         ep.set_status("scripted")
     return get_episode(slug)
 
@@ -408,9 +410,9 @@ class VoiceBody(BaseModel):
 @app.post("/api/episodes/{slug}/voice")
 def request_voice(slug: str, body: VoiceBody):
     ep = _load(slug)
-    if ep.read("meta.json")["status"] not in ("approved", "voiced", "visuals_ready"):
+    if ep.read("meta.json")["status"] not in ("approved", "voiced", "visuals_ready", "rendered"):
         raise HTTPException(409, "Approve the script first. Narration is recorded from the approved version.")
-    if ep.read("meta.json")["status"] in ("voiced", "visuals_ready"):
+    if ep.read("meta.json")["status"] in ("voiced", "visuals_ready", "rendered"):
         ep.set_status("approved")
     _queue_voice(ep, body.voice)
     return get_episode(slug)
@@ -443,7 +445,7 @@ def narration_audio(slug: str):
 @app.post("/api/episodes/{slug}/visuals")
 def find_visuals(slug: str):
     ep = _load(slug)
-    if ep.read("meta.json")["status"] not in ("approved", "voiced", "visuals_ready"):
+    if ep.read("meta.json")["status"] not in ("approved", "voiced", "visuals_ready", "rendered"):
         raise HTTPException(409, "Approve the script first. Pictures are found for the approved beats.")
     topic = ep.read("meta.json")["topic"]
     return start_job("visuals", f"Finding pictures: {topic}", lambda: (visuals.run(slug), {"slug": slug})[1],
@@ -514,8 +516,61 @@ def approve_visuals(slug: str):
 
 
 def _unapprove_visuals(ep: Episode) -> None:
-    if ep.read("meta.json")["status"] == "visuals_ready":
+    if ep.read("meta.json")["status"] in ("visuals_ready", "rendered"):
         ep.set_status("voiced")
+
+
+# ──────────────────────────── render ────────────────────────────
+
+@app.post("/api/episodes/{slug}/render")
+def request_render(slug: str):
+    ep = _load(slug)
+    meta = ep.read("meta.json")
+    if meta["status"] not in ("visuals_ready", "rendered"):
+        raise HTTPException(409, "Approve the narration and pictures first.")
+    if (meta.get("render") or {}).get("state") in ("queued", "running"):
+        raise HTTPException(409, "This video is already in the render queue.")
+    meta["render"] = {"state": "queued", "requested_at": datetime.now(timezone.utc).isoformat()}
+    ep.write("meta.json", meta)
+    if meta["status"] == "rendered":
+        ep.set_status("visuals_ready")
+    if INLINE_WORKER:
+        from pipeline import worker
+        start_job("render", f"Rendering {meta['topic']}", lambda: worker.run_jobs("render"), slug=slug)
+    else:
+        _dispatch_worker()
+    return get_episode(slug)
+
+
+@app.post("/api/episodes/{slug}/render/cancel")
+def cancel_render(slug: str):
+    ep = _load(slug)
+    meta = ep.read("meta.json")
+    job = meta.get("render") or {}
+    if job.get("state") == "running":
+        raise HTTPException(409, "The render already started. It can't be stopped from here.")
+    if job.get("state") in ("queued", "error"):
+        job["state"] = "cancelled"
+        ep.write("meta.json", meta)
+    return get_episode(slug)
+
+
+@app.get("/api/episodes/{slug}/preview")
+def render_preview(slug: str):
+    from pipeline import render
+    data = render.load_preview(_load(slug))
+    if not data:
+        raise HTTPException(404, "No preview yet.")
+    return Response(data, media_type="video/mp4", headers={"Cache-Control": "private, max-age=300"})
+
+
+@app.get("/api/episodes/{slug}/captions.srt")
+def render_captions(slug: str):
+    srt = _load(slug).read("render/captions.srt")
+    if not srt:
+        raise HTTPException(404, "No captions yet.")
+    return Response(srt, media_type="application/x-subrip",
+                    headers={"Content-Disposition": f'attachment; filename="{slug}.srt"'})
 
 
 def _queue_voice(ep: Episode, voice_id: str | None) -> None:

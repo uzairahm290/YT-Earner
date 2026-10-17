@@ -73,7 +73,10 @@ const STATUS_TEXT = {
   approved: "Approved",
   voiced: "Pick the pictures",
   visuals_ready: "Ready to render",
+  rendered: "Video ready",
 };
+
+const RENDER_LINE = { queued: "Waiting to render", running: "Rendering…", error: "Render failed" };
 
 const VOICE_LINE = { queued: "Waiting for the narrator", running: "Narrating…", error: "Narration failed" };
 
@@ -86,6 +89,7 @@ function epLine(e) {
   if (e.running) return e.status === "new" ? "Researching…" : "Working…";
   if (e.status === "researched" && e.verify_total) return `${e.verify_done} of ${e.verify_total} facts checked`;
   if (e.status === "approved" && VOICE_LINE[e.voice_state]) return VOICE_LINE[e.voice_state];
+  if (e.status === "visuals_ready" && RENDER_LINE[e.render_state]) return RENDER_LINE[e.render_state];
   if (["scripted", "approved", "voiced"].includes(e.status)) return `${STATUS_TEXT[e.status]}${e.est_minutes ? ` · ${e.est_minutes} min` : ""}`;
   return STATUS_TEXT[e.status] || e.status;
 }
@@ -188,22 +192,32 @@ async function poll() {
   } catch { /* server restarting; try again next tick */ }
 }
 
-// Narration runs on the GitHub worker, not in this server's job list, so check its state from the episode list.
-let lastVoiceCheck = 0;
+// Narration and renders run on the GitHub worker, not in this server's job list,
+// so their state is read from the episode list (and the open story, for render progress).
+let lastWorkerCheck = 0;
+const workerState = (e) => `${e.voice_state}|${e.render_state}`;
 async function watchVoice() {
-  const waiting = state.episodes.some((e) => ["queued", "running"].includes(e.voice_state));
-  if (!waiting || Date.now() - lastVoiceCheck < 8000) return;
-  lastVoiceCheck = Date.now();
-  const before = new Map(state.episodes.map((e) => [e.slug, e.voice_state]));
+  const busy = (e) => ["queued", "running"].includes(e.voice_state) || ["queued", "running"].includes(e.render_state);
+  if (!state.episodes.some(busy) || Date.now() - lastWorkerCheck < 8000) return;
+  lastWorkerCheck = Date.now();
+  const before = new Map(state.episodes.map((e) => [e.slug, workerState(e)]));
   state.episodes = await api("/api/episodes");
-  const changed = state.episodes.filter((e) => before.get(e.slug) !== e.voice_state);
-  if (!changed.length) return;
+  const changed = state.episodes.filter((e) => before.get(e.slug) !== workerState(e));
+  const route = parseRoute();
+  const openRendering = route.view === "episode" && state.ep?.meta?.render?.state === "running";
+  if (!changed.length) {
+    // keep the progress bar moving on the story you're looking at
+    if (openRendering && !state.dirty) await loadEpisode(route.slug, true);
+    return;
+  }
   renderRail();
   for (const e of changed) {
-    if (e.voice_state === "done") toast(`Narration ready: ${e.topic}`);
-    if (e.voice_state === "error") toast(`Narration failed: ${e.topic}`, true);
+    const was = (before.get(e.slug) || "").split("|");
+    if (e.voice_state === "done" && was[0] !== "done") toast(`Narration ready: ${e.topic}`);
+    if (e.voice_state === "error" && was[0] !== "error") toast(`Narration failed: ${e.topic}`, true);
+    if (e.render_state === "done" && was[1] !== "done") toast(`Video rendered: ${e.topic}`);
+    if (e.render_state === "error" && was[1] !== "error") toast(`Render failed: ${e.topic}`, true);
   }
-  const route = parseRoute();
   if (route.view === "episode" && changed.some((e) => e.slug === route.slug) && !state.dirty) await loadEpisode(route.slug, true);
   else if (route.view === "desk") render();
 }
@@ -278,16 +292,17 @@ function render() {
 function renderDesk() {
   const eps = state.episodes;
   const cols = [
-    { title: "Researching", what: "Pulling sources and building the fact sheet.", match: (e) => e.status === "new" },
-    { title: "Check the facts", what: "Tick off each flagged claim before it goes in a script.", match: (e) => e.status === "researched" },
+    { title: "Research", what: "Sources pulled into a fact sheet. Tick off each flagged claim.", match: (e) => ["new", "researched"].includes(e.status) },
     { title: "Write the script", what: "Facts are solid. Pick an angle and write it.", match: (e) => e.status === "verified" },
     { title: "Review and approve", what: "Read it out loud, fix what sounds off, approve.", match: (e) => e.status === "scripted" },
     { title: "Narration", what: "Approved scripts get recorded by the narrator.", match: (e) => e.status === "approved" },
     { title: "Pick pictures", what: "Narration's done. Check the picture for every beat.", match: (e) => e.status === "voiced" },
-    { title: "Ready to render", what: "Waiting for the render stage, which comes next.", match: (e) => e.status === "visuals_ready" },
+    { title: "Render", what: "Narration and pictures cut into the video.", match: (e) => e.status === "visuals_ready" },
+    { title: "Video ready", what: "Watch it, download it. Upload is the next stage.", match: (e) => e.status === "rendered" },
   ];
   const needYou = eps.filter((e) => !e.running && (["researched", "verified", "scripted", "voiced"].includes(e.status)
-    || (e.status === "approved" && ["error", "cancelled", undefined, null].includes(e.voice_state)))).length;
+    || (e.status === "approved" && ["error", "cancelled", undefined, null].includes(e.voice_state))
+    || (e.status === "visuals_ready" && !["queued", "running"].includes(e.render_state)))).length;
 
   if (!eps.length) {
     $("#main").innerHTML = `
@@ -371,6 +386,7 @@ function renderEpisode() {
     ["shorts", "Shorts", state.draft ? String(state.draft.shorts.length) : ""],
     ["visuals", "Pictures", ep.visuals ? (ep.visuals.summary.needs_you ? `${ep.visuals.summary.needs_you} need you` : "✓") : ""],
     ["package", "Title and thumbnail", ""],
+    ...(ep.meta?.render?.state === "done" ? [["video", "Video", "✓"]] : []),
   ];
 
   $("#main").innerHTML = `
@@ -449,9 +465,35 @@ function nextStep(ep, running, flags) {
         `${state.tab !== "visuals" ? `<button class="btn" data-tab="visuals">Open pictures</button>` : ""}
          <button class="btn btn-approve" data-act="approve-visuals">Approve pictures</button>`);
     }
-    case "visuals_ready":
-      return box(`<strong>Narration and pictures approved.</strong> Rendering the video is the next stage to be built; this story is first in line.`,
-        `<button class="btn" data-act="reopen-visuals">Change pictures</button>`);
+    case "visuals_ready": {
+      const job = ep.meta?.render || {};
+      if (job.state === "queued") {
+        const when = state.status.worker === "every 10 minutes"
+          ? "The worker checks every 10 minutes, so it starts within about 15." : "It's starting now.";
+        return box(`<strong>Queued to render.</strong> ${when} A 15-minute video takes about 15–25 minutes on the free machine. You can close this page.`,
+          `<button class="btn" data-act="cancel-render">Cancel</button>`);
+      }
+      if (job.state === "running") {
+        const pct = job.progress || 0;
+        return box(`<strong>Rendering…</strong> ${pct}% of the shots done. This page updates by itself.
+          <span class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></span>`);
+      }
+      if (job.state === "error") {
+        return box(`<strong>Render failed.</strong> ${esc(job.error || "")}`,
+          `<button class="btn btn-primary" data-act="render">Try again</button>
+           <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
+      }
+      return box(`<strong>Narration and pictures approved.</strong> Cut them into the finished video: Ken Burns moves on the photos, lower thirds, one grade, captions.`,
+        `<button class="btn btn-primary" data-act="render">Render the video</button>
+         <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
+    }
+    case "rendered": {
+      const r = ep.meta?.render || {};
+      return box(`<strong>Video rendered:</strong> ${clock(r.duration || 0)}, ${r.size_mb || "?"} MB, ${r.shots || "?"} shots${r.fallbacks ? `, ${r.fallbacks} used a card because their picture wouldn't load` : ""}. Upload to YouTube is the next stage.`,
+        `${state.tab !== "video" ? `<button class="btn btn-primary" data-tab="video">Watch the preview</button>` : ""}
+         ${downloadLink(r, "btn")}
+         <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
+    }
     default:
       return "";
   }
@@ -474,6 +516,7 @@ function renderTab() {
   else if (state.tab === "script") body.innerHTML = scriptTab();
   else if (state.tab === "shorts") body.innerHTML = shortsTab();
   else if (state.tab === "visuals") body.innerHTML = visualsTab();
+  else if (state.tab === "video") { body.innerHTML = videoTab(); loadPreview(); }
   else body.innerHTML = packageTab();
   $$("textarea.autosize", body).forEach(autosize);
 }
@@ -733,6 +776,53 @@ document.addEventListener("keydown", (e) => {
     e.target.closest("[data-beat]").querySelector('[data-act="search-visual"]').click();
   }
 });
+
+// ───── finished video ─────
+
+function downloadLink(r, cls = "") {
+  if (r.run_id && r.repo) {
+    return `<a class="${cls}" href="https://github.com/${esc(r.repo)}/actions/runs/${esc(r.run_id)}" target="_blank" rel="noopener">Download full video</a>`;
+  }
+  return r.file ? `<span class="muted">Rendered locally: <code>output/${esc(r.file)}</code></span>` : "";
+}
+
+function videoTab() {
+  const r = state.ep.meta?.render || {};
+  if (r.state !== "done") return `<div class="empty"><h2>No video yet</h2><p>Render it once the narration and pictures are approved.</p></div>`;
+  const slug = encodeURIComponent(state.ep.slug);
+  return `
+    <div class="vid">
+      <div class="vid-frame"><video id="previewPlayer" controls playsinline preload="metadata"></video>
+        <p class="vid-note">Preview: first ${state.status.preview_seconds || 60} seconds at 480p. The full video is 1080p.</p></div>
+      <dl class="vid-facts">
+        <div><dt>Length</dt><dd>${clock(r.duration || 0)}</dd></div>
+        <div><dt>File</dt><dd>${r.size_mb} MB, 1920×1080, 30 fps</dd></div>
+        <div><dt>Shots</dt><dd>${r.shots}${r.fallbacks ? ` (${r.fallbacks} fell back to a card)` : ""}</dd></div>
+        <div><dt>Render time</dt><dd>${Math.round((r.seconds_taken || 0) / 60)} min</dd></div>
+      </dl>
+      <div class="vid-actions">
+        ${downloadLink(r, "btn btn-primary")}
+        <a class="btn" href="/api/episodes/${slug}/captions.srt">Captions (.srt)</a>
+        <button class="btn" data-act="render">Render again</button>
+      </div>
+      <p class="hint">The full video is kept on GitHub for 30 days, under <b>Artifacts</b> at the bottom of the run page (sign in to GitHub to download). Captions get uploaded to YouTube as a subtitle track, not burned in.</p>
+    </div>`;
+}
+
+let previewKey = null, previewUrl = null;
+async function loadPreview() {
+  const el = $("#previewPlayer");
+  if (!el) return;
+  const key = `${state.ep.slug}:${state.ep.meta?.render?.finished_at}`;
+  if (previewKey !== key) {
+    const res = await fetch(`/api/episodes/${encodeURIComponent(state.ep.slug)}/preview`);
+    if (!res.ok) { el.replaceWith(Object.assign(document.createElement("p"), { className: "muted", textContent: "Preview isn't available." })); return; }
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(await res.blob());
+    previewKey = key;
+  }
+  el.src = previewUrl;
+}
 
 // ───── narration playback ─────
 // One MP3 per story. Each beat's play button seeks into it and stops at the beat's end.
@@ -1167,6 +1257,16 @@ document.addEventListener("click", async (e) => {
 
       case "toggle-needs":
         state.onlyNeeds = !state.onlyNeeds; renderTab(); break;
+
+      case "render":
+        state.ep = await api(`/api/episodes/${slug}/render`, { method: "POST" });
+        state.episodes = await api("/api/episodes");
+        await poll();
+        toast("Queued to render"); render(); break;
+
+      case "cancel-render":
+        state.ep = await api(`/api/episodes/${slug}/render/cancel`, { method: "POST" });
+        state.episodes = await api("/api/episodes"); render(); break;
 
       case "cancel-voice":
         state.ep = await api(`/api/episodes/${slug}/voice/cancel`, { method: "POST" });

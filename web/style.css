@@ -185,7 +185,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--c
 /* ───────────── desk (home) ───────────── */
 
 .desk-head { margin-bottom: 36px; }
-.queue { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0; border-top: 2px solid var(--ink); }
+.queue { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0; border-top: 2px solid var(--ink); }
 .queue-col { padding: 14px 18px 18px 0; border-right: 1px solid var(--rule); }
 .queue-col + .queue-col { padding-left: 18px; }
 .queue-col:last-child { border-right: 0; }
@@ -576,3 +576,22 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--c
   .v-row { grid-template-columns: 1fr; }
   .v-bar { margin: -8px -16px 16px; padding: 10px 16px; }
 }
+
+/* ───────────── render + video ───────────── */
+
+.progress-bar { display: block; height: 6px; margin-top: 8px; background: var(--rule); border-radius: 99px; overflow: hidden; }
+.progress-bar span { display: block; height: 100%; background: var(--cue); transition: width .4s; }
+
+.vid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); gap: 28px; align-items: start; }
+.vid-frame video { width: 100%; aspect-ratio: 16 / 9; background: #10161c; border-radius: var(--r-md); display: block; }
+.vid-note { font-size: 13px; color: var(--graphite); margin-top: 6px; }
+.vid-facts { margin: 0; display: flex; flex-direction: column; border-top: 2px solid var(--ink); }
+.vid-facts div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--rule); }
+.vid-facts dt { color: var(--graphite); }
+.vid-facts dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.vid-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+.vid .hint { grid-column: 1 / -1; max-width: 70ch; }
+a.btn { text-decoration: none; color: inherit; }
+a.btn-primary { color: var(--cue-ink); }
+
+@media (max-width: 760px) { .vid { grid-template-columns: 1fr; } }
