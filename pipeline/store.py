@@ -9,6 +9,7 @@ named text files per episode (meta.json, factsheet.json, script.json, ...).
 from __future__ import annotations
 
 import shutil
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -116,7 +117,20 @@ class PgStore:
             c.execute("delete from desk.episode_files where slug=%s", (slug,))
 
 
+_store_lock = threading.Lock()
+
+
 @lru_cache(maxsize=1)
-def get_store():
+def _build_store():
     dsn = env("DATABASE_URL")
     return PgStore(dsn) if dsn else FileStore()
+
+
+def get_store():
+    # The dashboard fires several requests at once on page load. Without the lock each one
+    # can miss the cache at the same time and open its own connection pool.
+    with _store_lock:
+        return _build_store()
+
+
+get_store.cache_clear = _build_store.cache_clear  # tests reset the store between runs
