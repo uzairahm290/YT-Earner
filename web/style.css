@@ -595,3 +595,8 @@ a.btn { text-decoration: none; color: inherit; }
 a.btn-primary { color: var(--cue-ink); }
 
 @media (max-width: 760px) { .vid { grid-template-columns: 1fr; } }
+
+/* AI illustrations: always labeled */
+.v-badge.v-ai { left: auto; right: 6px; background: var(--marker); color: #10161c; font-weight: 700; }
+.v-alt .v-badge.v-ai { right: 3px; }
+.v-draw { color: #8a6533; border-color: var(--marker); }

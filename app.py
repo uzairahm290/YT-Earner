@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import research, script, topics, visuals, voice
+from pipeline import illustrate, research, script, topics, visuals, voice
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -40,6 +40,7 @@ DEMO = os.getenv("DOCU_MOCK_LLM") == "1"
 INLINE_WORKER = DEMO or os.getenv("INLINE_WORKER") == "1"
 if DEMO:
     os.environ.setdefault("DOCU_MOCK_TTS", "1")
+    os.environ.setdefault("DOCU_MOCK_ILLUSTRATE", "1")
     os.environ.setdefault("DOCU_MOCK_VISUALS", "1")
 
 # The full flow, in order. `built: False` stages show in the UI as coming next.
@@ -240,6 +241,7 @@ def summarize(ep: Episode, files: dict | None = None) -> dict:
         "est_minutes": lint.get("est_minutes") if lint else None,
         "voice_state": (meta.get("voice") or {}).get("state"),
         "render_state": (meta.get("render") or {}).get("state"),
+        "illustrate_state": (meta.get("illustrate") or {}).get("state"),
         "running": any(j["slug"] == ep.slug and j["status"] == "running" for j in _jobs.values()),
     }
 
@@ -262,6 +264,7 @@ def get_episode(slug: str):
     if vis:
         vis["summary"] = visuals.summary(vis)
         vis["credits"] = visuals.credits(vis)
+        vis["illustratable"] = illustrate.candidates_for(vis)
     return {**summarize(ep),
             "meta": ep.read("meta.json"),
             "factsheet": ep.read("factsheet.json"),
@@ -491,12 +494,12 @@ def upload_visual(slug: str, beat_id: str, body: UploadBody):
     return get_episode(slug)
 
 
-@app.get("/api/episodes/{slug}/uploads/{name}")
-def get_upload(slug: str, name: str):
+@app.get("/api/episodes/{slug}/{folder}/{name}")
+def get_upload(slug: str, folder: str, name: str):
     ep = _load(slug)
-    if not re.fullmatch(r"c\d+b\d+-\d+\.b64", name):
+    if folder not in ("uploads", "ai") or not re.fullmatch(r"c\d+b\d+-\d+\.b64", name):
         raise HTTPException(404, "No such upload")
-    found = visuals.load_upload(ep, f"visuals/uploads/{name}")
+    found = visuals.load_upload(ep, f"visuals/{folder}/{name}")
     if not found:
         raise HTTPException(404, "No such upload")
     mime, data = found
@@ -518,6 +521,42 @@ def approve_visuals(slug: str):
 def _unapprove_visuals(ep: Episode) -> None:
     if ep.read("meta.json")["status"] in ("visuals_ready", "rendered"):
         ep.set_status("voiced")
+
+
+class IllustrateBody(BaseModel):
+    beats: list[str] | None = None
+
+
+@app.post("/api/episodes/{slug}/visuals/illustrate")
+def request_illustrations(slug: str, body: IllustrateBody):
+    ep = _load(slug)
+    manifest = ep.read("visuals.json")
+    if not manifest:
+        raise HTTPException(409, "Find pictures first.")
+    meta = ep.read("meta.json")
+    if (meta.get("illustrate") or {}).get("state") in ("queued", "running"):
+        raise HTTPException(409, "Illustrations for this story are already being drawn.")
+    beats = {b["id"]: b for b in manifest["beats"]}
+    wanted = body.beats or illustrate.candidates_for(manifest)
+    for bid in wanted:
+        b = beats.get(bid)
+        if not b:
+            raise HTTPException(404, f"No beat {bid}.")
+        ok, why = illustrate.eligible(b["type"], b["query"])
+        if not ok:
+            raise HTTPException(422, f"{bid}: {why}")
+    if not wanted:
+        raise HTTPException(409, "No beats here can be illustrated: they all show real people, products or documents.")
+    meta["illustrate"] = {"state": "queued", "beats": wanted,
+                          "requested_at": datetime.now(timezone.utc).isoformat()}
+    ep.write("meta.json", meta)
+    if INLINE_WORKER:
+        from pipeline import worker
+        start_job("illustrate", f"Drawing illustrations: {meta['topic']}",
+                  lambda: worker.run_jobs("illustrate"), slug=slug)
+    else:
+        _dispatch_worker()
+    return get_episode(slug)
 
 
 # ──────────────────────────── render ────────────────────────────

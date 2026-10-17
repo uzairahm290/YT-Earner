@@ -160,7 +160,10 @@ const track = (job) => lastJobs.set(job.id, "running");
 async function poll() {
   try {
     const jobs = await api("/api/jobs");
-    const finished = jobs.filter((j) => j.status !== "running" && lastJobs.get(j.id) === "running");
+    // Finished since last look: was running before, or is new and already done (fast jobs
+    // can start and finish between two checks).
+    const finished = jobs.filter((j) => j.status !== "running" &&
+      (lastJobs.has(j.id) ? lastJobs.get(j.id) === "running" : true));
     state.jobs = jobs;
     lastJobs = new Map(jobs.map((j) => [j.id, j.status]));
     renderJobs();
@@ -195,9 +198,9 @@ async function poll() {
 // Narration and renders run on the GitHub worker, not in this server's job list,
 // so their state is read from the episode list (and the open story, for render progress).
 let lastWorkerCheck = 0;
-const workerState = (e) => `${e.voice_state}|${e.render_state}`;
+const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}`;
 async function watchVoice() {
-  const busy = (e) => ["queued", "running"].includes(e.voice_state) || ["queued", "running"].includes(e.render_state);
+  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state].some((s) => ["queued", "running"].includes(s));
   if (!state.episodes.some(busy) || Date.now() - lastWorkerCheck < 8000) return;
   lastWorkerCheck = Date.now();
   const before = new Map(state.episodes.map((e) => [e.slug, workerState(e)]));
@@ -217,6 +220,8 @@ async function watchVoice() {
     if (e.voice_state === "error" && was[0] !== "error") toast(`Narration failed: ${e.topic}`, true);
     if (e.render_state === "done" && was[1] !== "done") toast(`Video rendered: ${e.topic}`);
     if (e.render_state === "error" && was[1] !== "error") toast(`Render failed: ${e.topic}`, true);
+    if (e.illustrate_state === "done" && was[2] !== "done") toast(`Illustrations ready: ${e.topic}`);
+    if (e.illustrate_state === "error" && was[2] !== "error") toast(`Illustrations failed: ${e.topic}`, true);
   }
   if (route.view === "episode" && changed.some((e) => e.slug === route.slug) && !state.dirty) await loadEpisode(route.slug, true);
   else if (route.view === "desk") render();
@@ -653,17 +658,19 @@ function scriptBar() {
 // ───── pictures ─────
 // One row per beat: the chosen picture big, alternates beside it, search and upload right there.
 
-const SOURCE_NAME = { commons: "Wikimedia Commons", pexels: "Pexels", pixabay: "Pixabay", upload: "Your upload", card: "Card" };
+const SOURCE_NAME = { commons: "Wikimedia Commons", pexels: "Pexels", pixabay: "Pixabay", upload: "Your upload", card: "Card", ai: "AI illustration" };
 
 function candidateThumb(c, big = false) {
   const slug = encodeURIComponent(state.ep.slug);
   if (c.source === "card") return cardPreview(c, big);
-  const src = c.source === "upload" ? `/api/episodes/${slug}/uploads/${c.file.split("/").pop()}` : c.thumb;
+  const src = ["upload", "ai"].includes(c.source)
+    ? `/api/episodes/${slug}/${c.source === "ai" ? "ai" : "uploads"}/${c.file.split("/").pop()}` : c.thumb;
   if (big && c.kind === "video") {
     return `<video class="v-media" src="${esc(c.url)}" poster="${esc(c.thumb || "")}" preload="none" muted controls playsinline></video>`;
   }
   return `<img class="v-media" src="${esc(src)}" alt="${esc(c.title || "")}" loading="lazy" referrerpolicy="no-referrer">
-    ${c.kind === "video" ? `<span class="v-badge">▶ ${c.duration ? `${c.duration}s` : "video"}</span>` : ""}`;
+    ${c.kind === "video" ? `<span class="v-badge">▶ ${c.duration ? `${c.duration}s` : "video"}</span>` : ""}
+    ${c.source === "ai" ? `<span class="v-badge v-ai">AI</span>` : ""}`;
 }
 
 function cardPreview(c, big) {
@@ -690,18 +697,22 @@ function visualsTab() {
   const timings = new Map((ep.voice?.beats || []).map((b) => [b.id, b]));
   const narration = new Map((ep.script?.chapters || []).flatMap((ch) => ch.beats.map((b) => [b.id, b.narration])));
   const stock = state.status.stock_video || [];
+  const drawing = ["queued", "running"].includes(ep.meta?.illustrate?.state);
   const rows = v.beats.filter((b) => !state.onlyNeeds || needsYou(b));
 
   return `
     <div class="v-bar">
       <div class="stats">
         <span class="stat"><b>${sum.real}</b> real pictures</span>
+        ${sum.illustrations ? `<span class="stat"><b>${sum.illustrations}</b> illustrations</span>` : ""}
         <span class="stat"><b>${sum.cards}</b> cards</span>
         <span class="stat ${sum.needs_you ? "warn" : ""}"><b>${sum.needs_you}</b> need you</span>
       </div>
       <label class="v-filter"><input type="checkbox" data-act="toggle-needs" ${state.onlyNeeds ? "checked" : ""}> Only beats that need you</label>
+      ${illustrateButton(v)}
       <button class="btn" data-act="find-visuals" ${running ? "disabled" : ""}>${running ? "Searching…" : "Search again"}</button>
     </div>
+    ${illustrateNote()}
     ${stock.length ? "" : `<p class="v-note">Stock video is off. Add a free <code>PEXELS_API_KEY</code> on Render to get real footage for the B-roll beats; until then they use Commons photos.</p>`}
     <ol class="v-list">
       ${rows.map((b) => {
@@ -718,13 +729,14 @@ function visualsTab() {
             <div class="v-alts">
               ${b.candidates.map((alt, i) => `<button class="v-alt ${i === b.chosen ? "on" : ""}" data-act="pick-visual" data-i="${i}" aria-label="Use option ${i + 1}: ${esc(SOURCE_NAME[alt.source])}" title="${esc(alt.title || SOURCE_NAME[alt.source])}">${candidateThumb(alt)}</button>`).join("")}
               <button class="v-alt v-add" data-act="upload-visual" aria-label="Upload your own picture" title="Upload your own (screenshot or photo)">＋</button>
+              ${(v.illustratable || []).includes(b.id) && !drawing ? `<button class="v-alt v-add v-draw" data-act="illustrate-beat" aria-label="Draw an AI illustration for this beat" title="Draw an AI illustration (abstract beats only)">✦</button>` : ""}
               <input type="file" accept="image/png,image/jpeg,image/webp" hidden>
             </div>
             <div class="v-search">
               <input type="text" class="v-query" value="${esc(b.query)}" aria-label="Search words for this beat">
               <button class="btn btn-quiet" data-act="search-visual">Search</button>
             </div>
-            <p class="v-credit">${c.source === "card" ? "Generated card, no credit needed" : `${esc(SOURCE_NAME[c.source])}${c.credit && c.source !== "upload" ? ` · ${esc(c.credit)}` : ""}${c.license && c.source !== "upload" ? ` · ${esc(c.license)}` : ""}${c.page ? ` · <a href="${esc(c.page)}" target="_blank" rel="noopener">source</a>` : ""}`}</p>
+            <p class="v-credit">${c.source === "card" ? "Generated card, no credit needed" : c.source === "ai" ? "AI illustration (SDXL), drawn for this beat in the channel's style" : `${esc(SOURCE_NAME[c.source])}${c.credit && c.source !== "upload" ? ` · ${esc(c.credit)}` : ""}${c.license && c.source !== "upload" ? ` · ${esc(c.license)}` : ""}${c.page ? ` · <a href="${esc(c.page)}" target="_blank" rel="noopener">source</a>` : ""}`}</p>
             ${b.errors?.length ? `<p class="v-err">Search problem: ${esc(b.errors[0])}</p>` : ""}
           </div>
         </li>`;
@@ -736,6 +748,21 @@ function visualsTab() {
       <pre>${esc(v.credits.join("\n")) || "No credited sources used yet."}</pre>
       ${v.credits.length ? `<button class="btn" data-act="copy-credits">Copy credits</button>` : ""}
     </details>`;
+}
+
+function illustrateButton(v) {
+  const job = state.ep.meta?.illustrate || {};
+  if (["queued", "running"].includes(job.state)) return `<button class="btn" disabled>${job.state === "running" ? "Drawing…" : "Queued to draw"}</button>`;
+  const n = (v.illustratable || []).length;
+  return n ? `<button class="btn" data-act="illustrate" title="AI illustrations in the channel's ink style, for abstract beats only">✦ Illustrate ${n} abstract ${n === 1 ? "beat" : "beats"}</button>` : "";
+}
+
+function illustrateNote() {
+  const job = state.ep.meta?.illustrate || {};
+  if (job.state === "queued") return `<p class="v-note">Queued for Kaggle's GPU: ${job.beats?.length || 0} beats, ${state.status.worker === "every 10 minutes" ? "starts when the worker next checks in, then " : ""}about 10–15 minutes including Kaggle's queue. They'll appear as extra options on each beat.</p>`;
+  if (job.state === "running") return `<p class="v-note">Drawing on Kaggle's GPU… about 10–15 minutes. They'll appear as extra options marked AI.</p>`;
+  if (job.state === "error") return `<p class="v-note v-err">Illustrations failed: ${esc(job.error || "")}</p>`;
+  return "";
 }
 
 function needsYou(b) {
@@ -1205,6 +1232,7 @@ document.addEventListener("click", async (e) => {
         state.ep = await api(`/api/episodes/${slug}/approve`, { method: "POST", body: { voice: $("#voicePick")?.value } });
         state.episodes = await api("/api/episodes");
         await poll();
+        lastWorkerCheck = 0;
         toast("Approved. Narration queued."); render(); break;
 
       case "record-voice":
@@ -1212,6 +1240,7 @@ document.addEventListener("click", async (e) => {
         state.ep = await api(`/api/episodes/${slug}/voice`, { method: "POST", body: { voice: $("#voicePick")?.value } });
         state.episodes = await api("/api/episodes");
         await poll();
+        lastWorkerCheck = 0;
         toast("Narration queued"); render(); break;
 
       case "find-visuals":
@@ -1255,6 +1284,16 @@ document.addEventListener("click", async (e) => {
         await navigator.clipboard.writeText(state.ep.visuals.credits.join("\n"));
         toast("Credits copied"); break;
 
+      case "illustrate":
+      case "illustrate-beat": {
+        const body = act === "illustrate-beat" ? { beats: [btn.closest("[data-beat]").dataset.beat] } : {};
+        state.ep = await api(`/api/episodes/${slug}/visuals/illustrate`, { method: "POST", body });
+        state.episodes = await api("/api/episodes");
+        await poll();
+        lastWorkerCheck = 0;  // look again on the next tick instead of waiting 8 s
+        toast("Queued for illustration"); renderEpisode(); break;
+      }
+
       case "toggle-needs":
         state.onlyNeeds = !state.onlyNeeds; renderTab(); break;
 
@@ -1262,6 +1301,7 @@ document.addEventListener("click", async (e) => {
         state.ep = await api(`/api/episodes/${slug}/render`, { method: "POST" });
         state.episodes = await api("/api/episodes");
         await poll();
+        lastWorkerCheck = 0;
         toast("Queued to render"); render(); break;
 
       case "cancel-render":
