@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import hmac
 import os
+import re
 import threading
 import time
 import traceback
@@ -28,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import research, script, topics, voice
+from pipeline import research, script, topics, visuals, voice
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -39,6 +40,7 @@ DEMO = os.getenv("DOCU_MOCK_LLM") == "1"
 INLINE_WORKER = DEMO or os.getenv("INLINE_WORKER") == "1"
 if DEMO:
     os.environ.setdefault("DOCU_MOCK_TTS", "1")
+    os.environ.setdefault("DOCU_MOCK_VISUALS", "1")
 
 # The full flow, in order. `built: False` stages show in the UI as coming next.
 STAGES = [
@@ -47,7 +49,7 @@ STAGES = [
     {"key": "script", "label": "Script", "status": "scripted", "built": True},
     {"key": "approve", "label": "Approve script", "status": "approved", "built": True},
     {"key": "voice", "label": "Voice", "status": "voiced", "built": True},
-    {"key": "visuals", "label": "Visuals", "status": "visuals_ready", "built": False},
+    {"key": "visuals", "label": "Visuals", "status": "visuals_ready", "built": True},
     {"key": "render", "label": "Render", "status": "rendered", "built": False},
     {"key": "shorts", "label": "Shorts", "status": "shorts_ready", "built": False},
     {"key": "upload", "label": "Upload", "status": "uploaded", "built": False},
@@ -195,6 +197,7 @@ def status():
         "banned_phrases": cfg["banned_phrases"],
         "voices": voice.voice_choices(),
         "voice_default": cfg["voice"]["default"],
+        "stock_video": [p for p in ("pexels", "pixabay") if env(f"{p.upper()}_API_KEY")],
         "worker": "inline" if INLINE_WORKER else ("instant" if _dispatch_ready() else "every 10 minutes"),
     }
 
@@ -253,12 +256,17 @@ def get_episode(slug: str):
     if timings and sc:
         # The narration was recorded from an older version of the script.
         timings["stale"] = timings.get("script_hash") != voice.script_hash(sc)
+    vis = ep.read("visuals.json")
+    if vis:
+        vis["summary"] = visuals.summary(vis)
+        vis["credits"] = visuals.credits(vis)
     return {**summarize(ep),
             "meta": ep.read("meta.json"),
             "factsheet": ep.read("factsheet.json"),
             "script": sc,
             "lint": ep.read("lint.json"),
-            "voice": timings}
+            "voice": timings,
+            "visuals": vis}
 
 
 class NewEpisode(BaseModel):
@@ -354,7 +362,7 @@ def save_script(slug: str, data: dict):
         where = " → ".join(str(p) for p in first["loc"])
         raise HTTPException(422, f"{where}: {first['msg']}")
     # Any edit after approval sends it back for another look (and a new narration).
-    if ep.read("meta.json")["status"] in ("approved", "voiced"):
+    if ep.read("meta.json")["status"] in ("approved", "voiced", "visuals_ready"):
         ep.set_status("scripted")
     return get_episode(slug)
 
@@ -386,7 +394,7 @@ def unapprove(slug: str):
     if (meta.get("voice") or {}).get("state") in ("queued",):
         meta["voice"]["state"] = "cancelled"
         ep.write("meta.json", meta)
-    if meta["status"] in ("approved", "voiced"):
+    if meta["status"] in ("approved", "voiced", "visuals_ready"):
         ep.set_status("scripted")
     return get_episode(slug)
 
@@ -400,9 +408,9 @@ class VoiceBody(BaseModel):
 @app.post("/api/episodes/{slug}/voice")
 def request_voice(slug: str, body: VoiceBody):
     ep = _load(slug)
-    if ep.read("meta.json")["status"] not in ("approved", "voiced"):
+    if ep.read("meta.json")["status"] not in ("approved", "voiced", "visuals_ready"):
         raise HTTPException(409, "Approve the script first. Narration is recorded from the approved version.")
-    if ep.read("meta.json")["status"] == "voiced":
+    if ep.read("meta.json")["status"] in ("voiced", "visuals_ready"):
         ep.set_status("approved")
     _queue_voice(ep, body.voice)
     return get_episode(slug)
@@ -428,6 +436,86 @@ def narration_audio(slug: str):
     if not mp3:
         raise HTTPException(404, "No narration recorded yet.")
     return Response(mp3, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=300"})
+
+
+# ──────────────────────────── visuals ────────────────────────────
+
+@app.post("/api/episodes/{slug}/visuals")
+def find_visuals(slug: str):
+    ep = _load(slug)
+    if ep.read("meta.json")["status"] not in ("approved", "voiced", "visuals_ready"):
+        raise HTTPException(409, "Approve the script first. Pictures are found for the approved beats.")
+    topic = ep.read("meta.json")["topic"]
+    return start_job("visuals", f"Finding pictures: {topic}", lambda: (visuals.run(slug), {"slug": slug})[1],
+                     slug=slug)
+
+
+class VisualEdit(BaseModel):
+    choice: int | None = None
+    query: str | None = None
+
+
+@app.put("/api/episodes/{slug}/visuals/{beat_id}")
+def edit_visual(slug: str, beat_id: str, body: VisualEdit):
+    ep = _load(slug)
+    try:
+        if body.query is not None and body.query.strip():
+            visuals.research_beat(slug, beat_id, body.query.strip())
+        elif body.choice is not None:
+            visuals.choose(slug, beat_id, body.choice)
+    except KeyError:
+        raise HTTPException(404, "That beat isn't in the picture list. Find pictures again.")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    _unapprove_visuals(ep)
+    return get_episode(slug)
+
+
+class UploadBody(BaseModel):
+    data_url: str
+    name: str = ""
+
+
+@app.post("/api/episodes/{slug}/visuals/{beat_id}/upload")
+def upload_visual(slug: str, beat_id: str, body: UploadBody):
+    ep = _load(slug)
+    try:
+        visuals.add_upload(slug, beat_id, body.data_url, body.name)
+    except KeyError:
+        raise HTTPException(404, "That beat isn't in the picture list.")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    _unapprove_visuals(ep)
+    return get_episode(slug)
+
+
+@app.get("/api/episodes/{slug}/uploads/{name}")
+def get_upload(slug: str, name: str):
+    ep = _load(slug)
+    if not re.fullmatch(r"c\d+b\d+-\d+\.b64", name):
+        raise HTTPException(404, "No such upload")
+    found = visuals.load_upload(ep, f"visuals/uploads/{name}")
+    if not found:
+        raise HTTPException(404, "No such upload")
+    mime, data = found
+    return Response(data, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/api/episodes/{slug}/visuals/approve")
+def approve_visuals(slug: str):
+    ep = _load(slug)
+    meta = ep.read("meta.json")
+    if not ep.read("visuals.json"):
+        raise HTTPException(409, "Find pictures first.")
+    if meta["status"] != "voiced":
+        raise HTTPException(409, "Record the narration first. The cut is timed to the voice.")
+    ep.set_status("visuals_ready")
+    return get_episode(slug)
+
+
+def _unapprove_visuals(ep: Episode) -> None:
+    if ep.read("meta.json")["status"] == "visuals_ready":
+        ep.set_status("voiced")
 
 
 def _queue_voice(ep: Episode, voice_id: str | None) -> None:
