@@ -118,6 +118,19 @@ stock video. Both are free:
 
 Then hit **Search again** on a story's Pictures tab.
 
+## 6. Optional: AI illustrations on Kaggle
+
+For abstract beats only (see the README for the rules). Uses Kaggle's free GPU, about 10–15 minutes per batch.
+
+1. kaggle.com → **Settings → Phone verification** (Kaggle needs it for GPU and internet in notebooks)
+2. **Settings → API → Create New Token** → copy the `KGAT_…` token
+3. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
+   - `KAGGLE_USERNAME`: your Kaggle username (the one in your profile URL)
+   - `KAGGLE_API_TOKEN`: the token
+
+Then use **✦ Illustrate** on a story's Pictures tab. The worker pushes a private notebook called
+`docu-illustrate` to your Kaggle account and runs it there; you can open it on kaggle.com/code to watch.
+
 ## When something's off
 
 | Symptom | Likely cause |

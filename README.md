@@ -25,6 +25,7 @@ Everything runs from the Production Desk:
 - **Script**: a two-column picture/narration paper edit. Running timecodes, shot type and search for each beat, lower thirds, pauses. AI phrases get marked in red as you type; numbers that aren't in the fact sheet get marked on save. Approve is locked until it's clean.
 - **Narration**: approving a script queues it for the narrator (Kokoro-82M, 7 voices to pick from). When it's done, every beat gets a play button and the script follows along as it plays. Edit the script and the recording is marked out of date.
 - **Pictures**: a real picture for every beat. Photos from Wikimedia Commons (freely licensed only, credited), stock footage from Pexels/Pixabay when a key is set, and clean cards for figures and titles. Documents get a card flagged for you to upload a screenshot of the real thing. Pick alternates, search again in your own words, or upload your own. Credits are collected for the description.
+- **AI illustrations (optional)**: for abstract B-roll beats only ("gears grinding to a halt", "two paths diverging"), SDXL draws options on Kaggle's free GPU in one fixed ink-and-duotone style, so they read as illustration, never as photos. Beats that name a person, product, company or date are never eligible. Every one is labeled AI and only used if you pick it.
 - **Render**: one click cuts the 1080p video on the GitHub worker: Ken Burns moves on photos, stock clips trimmed to the beat, cards in the channel's type, lower thirds, one grade with light grain, narration mastered on top, plus an SRT caption file. A 60-second preview plays in the dashboard; the full MP4 downloads from the GitHub run (kept 30 days).
 - **Shorts**: phone-shaped previews of each Short with its hook line.
 - **Title and thumbnail**: pick or write the title, thumbnail text and description.
@@ -79,6 +80,7 @@ pipeline/
   llm.py             any OpenAI-compatible endpoint (Gemini / Groq / local)
   voice.py           script → Kokoro narration → FFmpeg mastering → MP3 + beat timings
   visuals.py         beat → Commons photos / Pexels+Pixabay video / cards, licenses and credits
+  illustrate.py      abstract beats → SDXL on Kaggle (house style) → AI options; the eligibility rule lives here
   render.py          shots → Ken Burns / clips / cards + lower thirds → graded 1080p MP4 + captions
   worker.py          job queue: claims queued episodes, runs them, records errors
   episode.py         per-video files + status
