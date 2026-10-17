@@ -103,6 +103,19 @@ visuals:
   # Stock video kicks in when the matching key is set (PEXELS_API_KEY / PIXABAY_API_KEY).
   stock_providers: [pexels, pixabay]
 
+# Final cut.
+render:
+  width: 1920
+  height: 1080
+  fps: 30
+  crf: 20                    # x264 quality: lower = better and bigger. 18–22 is the sweet spot
+  preset: veryfast           # x264 speed. GitHub's free runner needs the speed
+  max_bitrate: 8M            # YouTube's recommended 1080p30 upload rate; keeps long videos under ~1 GB
+  ken_burns_zoom: 0.08       # how far stills drift over a beat (0.08 = 8%)
+  lower_third_seconds: 4.5   # how long a name/date caption stays up
+  grain: 5                   # film grain strength, 0 to turn off
+  preview_seconds: 60        # small preview stored for the dashboard
+
 # Phrases that scream "AI wrote this". Script lint fails if any show up.
 banned_phrases:
   - "in today's fast-paced world"
