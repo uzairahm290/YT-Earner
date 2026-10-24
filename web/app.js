@@ -121,7 +121,8 @@ function renderRail() {
 
   const route = location.hash.split("/")[1] || "";
   $$(".rail-nav a").forEach((a) => a.classList.toggle("active",
-    (a.dataset.nav === "desk" && route === "") || (a.dataset.nav === "topics" && route === "topics")));
+    (a.dataset.nav === "desk" && route === "") || (a.dataset.nav === "topics" && route === "topics") ||
+    (a.dataset.nav === "voice" && route === "voice")));
 
   const s = state.status;
   $("#signOut").hidden = !s?.auth;
@@ -173,6 +174,11 @@ async function poll() {
     if (finished.length) {
       state.episodes = await api("/api/episodes");
       renderRail();
+      if (parseRoute().view === "voice" && finished.some((j) => ["voicelab", "voiceref"].includes(j.kind))) {
+        state.lab = await api("/api/voicelab");
+        state.status.voiceref = state.lab.voiceref;
+        if (document.activeElement?.id !== "labText") renderVoice();
+      }
       for (const j of finished) {
         if (j.status === "error") toast(`${j.label} failed: ${j.error}`, true);
         else toast(j.kind === "topics" ? "Topic ideas updated" : `${j.label}: done`);
@@ -191,7 +197,7 @@ async function poll() {
       // keep "Researching…" labels fresh
       const before = JSON.stringify(state.episodes.map((e) => e.running));
       state.episodes = await api("/api/episodes");
-      if (JSON.stringify(state.episodes.map((e) => e.running)) !== before) { renderRail(); if (parseRoute().view !== "episode") render(); }
+      if (JSON.stringify(state.episodes.map((e) => e.running)) !== before) { renderRail(); if (!["episode", "voice"].includes(parseRoute().view)) render(); }
     }
     await watchVoice();
   } catch { /* server restarting; try again next tick */ }
@@ -210,7 +216,7 @@ async function watchVoiceRef() {
   state.status = await api("/api/status");
   const now = state.status.voiceref?.clean?.state;
   if (now !== before) {
-    if (now === "done") toast("Your voice sample is clean. Compare before and after on the story page.");
+    if (now === "done") toast("Your voice sample is clean. Compare before and after in the Voice studio.");
     if (now === "error") toast("Cleaning your voice sample failed.", true);
     if (state.ep && !state.dirty) renderEpisode();
   }
@@ -254,6 +260,7 @@ async function watchVoice() {
 function parseRoute() {
   const [, a, b, c] = location.hash.split("/");
   if (a === "topics") return { view: "topics" };
+  if (a === "voice") return { view: "voice" };
   if (a === "e" && b) return { view: "episode", slug: decodeURIComponent(b), tab: c || null };
   return { view: "desk" };
 }
@@ -274,6 +281,7 @@ window.addEventListener("hashchange", async () => {
 async function route() {
   const r = parseRoute();
   if (r.view === "topics" && !state.topics) state.topics = await api("/api/topics");
+  if (r.view === "voice") state.lab = await api("/api/voicelab");
   if (r.view === "episode") {
     if (state.ep?.slug !== r.slug) await loadEpisode(r.slug);
     else { if (r.tab) state.tab = r.tab; render(); }
@@ -313,6 +321,7 @@ function render() {
   renderRail();
   const r = parseRoute();
   if (r.view === "topics") renderTopics();
+  else if (r.view === "voice") renderVoice();
   else if (r.view === "episode" && state.ep) renderEpisode();
   else renderDesk();
 }
@@ -390,6 +399,110 @@ function renderTopics() {
           <button class="btn" data-act="research-topic" data-i="${i}">Research this</button>
         </li>`).join("")}
     </ul>` : `<div class="empty"><h2>No ideas fetched yet</h2><p>Refresh to pull today's headlines and Wikipedia's traffic spikes.</p></div>`}`;
+}
+
+// ───────────────────────── voice studio ─────────────────────────
+
+const LAB_STATE = { queued: "Queued", running: "Reading…", waiting: "On Kaggle…", done: "Ready", error: "Failed" };
+
+function renderVoice() {
+  const lab = state.lab || { takes: [], voices: {} };
+  const ref = lab.voiceref;
+  const draft = state.labDraft || { text: "", voice: ref ? lab.clone_voice : Object.keys(lab.voices)[0], speed: 1 };
+  state.labDraft = draft;
+  const chars = draft.text.length;
+  const mins = (chars / 5.5 / 150).toFixed(1);
+  const busy = lab.takes.some((t) => ["queued", "running", "waiting"].includes(t.state));
+
+  $("#main").innerHTML = `
+  <header class="lab-head"><h1>Voice studio</h1>
+    <p class="lede">Turn any text into narration: in your own voice with an American accent, or one of the built-in voices. Download it and use it anywhere.</p></header>
+
+  <section class="lab-card">
+    <h2>Your voice</h2>
+    ${ref ? `<div class="lab-ref">${voiceRefNote() || `<p class="vr-note">Sample saved.</p>`}</div>
+      <div class="lab-row"><button class="btn" data-act="lab-ref">Replace sample</button><button class="btn btn-quiet" data-act="lab-ref-del">Remove</button></div>`
+    : `<p class="hint">Record 30–60 seconds of yourself talking naturally in a quiet room, then upload it. It's cleaned on Kaggle (background voices and noise out) and used to make every take sound like you.</p>
+      <div class="lab-row"><button class="btn btn-primary" data-act="lab-ref">Upload a voice sample</button></div>`}
+    <input type="file" id="labRefFile" accept="audio/*,.m4a,.mp3,.wav" hidden>
+  </section>
+
+  <section class="lab-card">
+    <h2>Generate</h2>
+    <textarea id="labText" rows="9" maxlength="${lab.max_chars}" placeholder="Paste a script, a paragraph, a hook to test… Blank lines become short pauses.">${esc(draft.text)}</textarea>
+    <p class="lab-count" id="labCount">${chars.toLocaleString()} / ${(lab.max_chars || 12000).toLocaleString()} characters · about ${mins} min</p>
+    <div class="lab-row">
+      <label class="lab-field">Voice
+        <select id="labVoice">
+          ${ref ? `<option value="${lab.clone_voice}" ${draft.voice === lab.clone_voice ? "selected" : ""}>★ Your voice, American accent</option>` : ""}
+          ${Object.entries(lab.voices).map(([k, v]) => `<option value="${k}" ${draft.voice === k ? "selected" : ""}>${esc(v)}</option>`).join("")}
+        </select></label>
+      <label class="lab-field">Speed <span id="labSpeedVal">${Number(draft.speed).toFixed(2)}×</span>
+        <input type="range" id="labSpeed" min="0.8" max="1.2" step="0.05" value="${draft.speed}"></label>
+      <button class="btn btn-primary" data-act="lab-generate" ${chars < 2 ? "disabled" : ""}>Generate</button>
+    </div>
+    <p class="hint">${draft.voice === lab.clone_voice ? "Your voice runs on Kaggle's free GPU: a few minutes, longer when its queue is busy. Takes in your voice are AI narration; mark them as AI when you upload to YouTube."
+      : "Built-in voices are ready in a minute or two."}</p>
+  </section>
+
+  <section class="lab-card">
+    <h2>Takes</h2>
+    ${lab.takes.length ? `<ol class="lab-takes">${lab.takes.map((t) => `<li class="lab-take ${t.state}">
+      <div class="lab-take-top">
+        <span class="lab-badge ${t.state}">${LAB_STATE[t.state] || t.state}${t.state === "waiting" && t.kaggle_status ? `: Kaggle ${esc(t.kaggle_status)}` : ""}</span>
+        <span class="lab-meta">${t.voice === lab.clone_voice ? "Your voice" : esc(lab.voices[t.voice] || t.voice)} · ${t.speed}× · ${t.chars.toLocaleString()} chars${t.duration ? ` · ${clock(t.duration)}` : ""}</span>
+        <button class="sd-x" data-act="lab-del" data-id="${t.id}" aria-label="Delete take" title="Delete">×</button>
+      </div>
+      <p class="lab-preview">${esc(t.preview)}${t.chars > 160 ? "…" : ""}</p>
+      ${t.state === "done" ? `<div class="lab-row"><audio controls preload="none" src="/api/voicelab/${t.id}.mp3"></audio>
+        <a class="btn btn-quiet" href="/api/voicelab/${t.id}.mp3?download=1">Download MP3</a>
+        <button class="btn btn-quiet" data-act="lab-reuse" data-id="${t.id}">Edit and redo</button></div>` : ""}
+      ${t.state === "error" ? `<p class="v-note v-err">${esc(t.error || "")}</p>` : ""}
+    </li>`).join("")}</ol>` : `<p class="hint">Nothing yet. Generate a take above.</p>`}
+  </section>`;
+  if (busy || ["queued", "running", "waiting"].includes(ref?.clean?.state)) scheduleLabRefresh();
+}
+
+let labTimer = null;
+function scheduleLabRefresh() {
+  clearTimeout(labTimer);
+  labTimer = setTimeout(async () => {
+    if (parseRoute().view !== "voice") return;
+    const snap = () => JSON.stringify([(state.lab?.takes || []).map((t) => t.state), state.lab?.voiceref?.clean?.state]);
+    const before = snap();
+    try {
+      state.lab = await api("/api/voicelab");
+      state.status.voiceref = state.lab.voiceref;
+    } catch { /* server waking up */ }
+    const typing = document.activeElement?.id === "labText";
+    if (snap() !== before && !typing) renderVoice();
+    else scheduleLabRefresh();
+  }, 8000);
+}
+
+document.addEventListener("input", (e) => {
+  if (!state.labDraft) return;
+  if (e.target.id === "labText") {
+    state.labDraft.text = e.target.value;
+    const c = e.target.value.length;
+    $("#labCount").textContent = `${c.toLocaleString()} / ${(state.lab?.max_chars || 12000).toLocaleString()} characters · about ${(c / 5.5 / 150).toFixed(1)} min`;
+    const g = $('[data-act="lab-generate"]'); if (g) g.disabled = c < 2;
+  }
+  if (e.target.id === "labSpeed") { state.labDraft.speed = +e.target.value; $("#labSpeedVal").textContent = `${(+e.target.value).toFixed(2)}×`; }
+});
+document.addEventListener("change", (e) => {
+  if (e.target.id === "labVoice" && state.labDraft) { state.labDraft.voice = e.target.value; renderVoice(); }
+});
+
+async function uploadVoiceSample(input) {
+  const file = input.files[0];
+  if (!file) return false;
+  if (file.size > 20 * 1024 * 1024) { toast("That recording is over 20 MB. 30-60 seconds is plenty.", true); return false; }
+  const data_url = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+  const typed = /^data:(audio|video)\//.test(data_url) ? data_url : data_url.replace(/^data:[^;]*;/, "data:audio/mp4;");
+  state.status.voiceref = await api("/api/voiceref", { method: "POST", body: { data_url: typed, name: "My voice", consent: true } });
+  toast("Voice sample saved. It's being cleaned on Kaggle; you can generate already.");
+  return true;
 }
 
 // ───────────────────────── episode ─────────────────────────
@@ -574,7 +687,7 @@ function voiceRefNote() {
   const c = r.clean || {};
   const v = encodeURIComponent(c.finished_at || r.updated_at || "");
   if (["queued", "running", "waiting"].includes(c.state)) {
-    return `<p class="vr-note">Your voice sample is being cleaned on Kaggle's GPU (background voices and noise out)${c.kaggle_status ? `: Kaggle says <b>${esc(c.kaggle_status)}</b>` : ""}. You can record narration now; it uses the clean sample once it's ready.</p>`;
+    return `<p class="vr-note">Your voice sample is being cleaned on Kaggle's GPU (background voices and noise out)${c.kaggle_status ? `: Kaggle says <b>${esc(c.kaggle_status)}</b>` : ""}. You can already use it; the clean version takes over once it's ready.</p>`;
   }
   if (c.state === "error") return `<p class="vr-note v-err">Couldn't clean your voice sample: ${esc(c.error || "")}. Narration will use it as uploaded.</p>`;
   if (c.state === "done") {
@@ -1653,6 +1766,43 @@ document.addEventListener("click", async (e) => {
           } catch (err) { toast(err.message, true); }
         };
         input.click(); break;
+      }
+      case "lab-ref": {
+        if (!confirm("Upload 30-60 seconds of yourself talking naturally, in a quiet room.\n\n" +
+          "It's used to make narration sound like you, with an American accent, using AI.\n\nOnly use your own voice, or someone's who agreed. Continue?")) break;
+        const input = $("#labRefFile");
+        input.onchange = async () => {
+          try { if (await uploadVoiceSample(input)) { state.lab = await api("/api/voicelab"); state.labDraft.voice = state.lab.clone_voice; renderVoice(); } }
+          catch (err) { toast(err.message, true); }
+        };
+        input.click(); break;
+      }
+      case "lab-ref-del": {
+        if (!confirm("Remove your voice sample? Takes already made stay.")) break;
+        await api("/api/voiceref", { method: "DELETE" });
+        state.status.voiceref = null;
+        state.lab = await api("/api/voicelab");
+        if (state.labDraft.voice === state.lab.clone_voice) state.labDraft.voice = Object.keys(state.lab.voices)[0];
+        renderVoice(); break;
+      }
+      case "lab-generate": {
+        const d = state.labDraft;
+        btn.disabled = true;
+        state.lab = await api("/api/voicelab", { method: "POST", body: { text: d.text, voice: d.voice, speed: d.speed } });
+        toast(d.voice === state.lab.clone_voice ? "Queued: reading it, then Kaggle makes it your voice" : "Queued");
+        renderVoice(); break;
+      }
+      case "lab-del": {
+        if (!confirm("Delete this take?")) break;
+        state.lab = await api(`/api/voicelab/${btn.dataset.id}`, { method: "DELETE" });
+        renderVoice(); break;
+      }
+      case "lab-reuse": {
+        const t = state.lab.takes.find((x) => x.id === btn.dataset.id);
+        const { text } = await api(`/api/voicelab/${btn.dataset.id}/text`);
+        state.labDraft = { text, voice: t.voice, speed: t.speed };
+        renderVoice();
+        $("#labText").focus(); window.scrollTo({ top: 0, behavior: "smooth" }); break;
       }
       case "save-shorts": await saveShorts(); toast("Shorts saved"); renderEpisode(); break;
       case "reset-shorts": {

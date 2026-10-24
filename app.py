@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import audio, illustrate, persona, research, script, shorts, story, thumbnail, topics, visuals, voice, voiceclone, youtube
+from pipeline import audio, illustrate, persona, research, script, shorts, story, thumbnail, topics, visuals, voice, voiceclone, voicelab, youtube
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -410,6 +410,64 @@ def voiceref_upload(body: VoiceRef):
     else:
         _dispatch_worker()
     return meta
+
+
+# ──────────────────────────── voice studio ────────────────────────────
+
+class LabRequest(BaseModel):
+    text: str
+    voice: str
+    speed: float = 1.0
+
+
+def _lab_view() -> dict:
+    return {"takes": list(reversed(voicelab.takes())), "voiceref": voiceclone.reference_info(),
+            "clone_voice": voiceclone.VOICE_ID, "voices": voice.voice_choices(),
+            "max_chars": voicelab.MAX_CHARS}
+
+
+@app.get("/api/voicelab")
+def voicelab_list():
+    if any(t.get("state") == "waiting" for t in voicelab.takes()) and not INLINE_WORKER:
+        if time.time() - _last_collect_wake[0] > 600:  # Kaggle still converting: keep the worker coming back
+            _last_collect_wake[0] = time.time()
+            _dispatch_worker()
+    return _lab_view()
+
+
+@app.post("/api/voicelab")
+def voicelab_create(body: LabRequest):
+    try:
+        voicelab.create(body.text, body.voice, body.speed)
+    except voicelab.LabError as e:
+        raise HTTPException(422, str(e))
+    if INLINE_WORKER:
+        start_job("voicelab", "Voice studio", voicelab.run_pending)
+    else:
+        _dispatch_worker()
+    return _lab_view()
+
+
+@app.get("/api/voicelab/{take_id}.mp3")
+def voicelab_audio(take_id: str, download: int = 0):
+    data = voicelab.audio(take_id)
+    if not data:
+        raise HTTPException(404, "Not ready.")
+    headers = {"Cache-Control": "private, max-age=3600"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="voice-{take_id}.mp3"'
+    return Response(data, media_type="audio/mpeg", headers=headers)
+
+
+@app.get("/api/voicelab/{take_id}/text")
+def voicelab_text(take_id: str):
+    return {"text": voicelab.text_of(take_id)}
+
+
+@app.delete("/api/voicelab/{take_id}")
+def voicelab_delete(take_id: str):
+    voicelab.delete(take_id)
+    return _lab_view()
 
 
 @app.get("/api/voiceref/audio")

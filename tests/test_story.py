@@ -275,3 +275,39 @@ class VoiceSampleCleanup(unittest.TestCase):
         voiceclone.save_reference(wav, "audio/wav", "Me again")
         self.assertEqual(voiceclone.clean_info()["state"], "queued")
         self.assertFalse(get_store().read("_settings", "voiceref/clean.b64"))
+
+
+class VoiceStudio(unittest.TestCase):
+    def tearDown(self):
+        from pipeline import voicelab, voiceclone
+        for t in voicelab.takes():
+            voicelab.delete(t["id"])
+        voiceclone.remove_reference()
+
+    def test_built_in_voice_take_through_the_worker(self):
+        from pipeline import voicelab
+        t = voicelab.create("First paragraph.\n\nSecond paragraph, a little longer than the first.", "am_michael", 1.1)
+        self.assertEqual(t["state"], "queued")
+        self.assertEqual(worker.main(check_only=True), 0)
+        self.assertEqual(worker.main(), 0)
+        done = voicelab.get(t["id"])
+        self.assertEqual(done["state"], "done", done)
+        self.assertTrue(voicelab.audio(t["id"]))
+
+    def test_your_voice_needs_a_sample_and_limits_are_enforced(self):
+        from pipeline import voicelab, voiceclone
+        with self.assertRaises(voicelab.LabError):
+            voicelab.create("Hello there.", voiceclone.VOICE_ID, 1.0)
+        with self.assertRaises(voicelab.LabError):
+            voicelab.create("x" * (voicelab.MAX_CHARS + 1), "am_michael", 1.0)
+        voiceclone.save_reference(b"\0" * 40000, "audio/wav", "Me")
+        t = voicelab.create("Hello there.", voiceclone.VOICE_ID, 5)
+        self.assertEqual(t["speed"], 1.2)  # clamped
+
+    def test_long_paragraphs_are_read_in_pieces(self):
+        from pipeline import voicelab
+        long = " ".join(["This is one sentence of a long paragraph."] * 60)
+        parts = voicelab._paragraphs(long + "\n\nShort one.")
+        self.assertGreater(len(parts), 2)
+        self.assertTrue(all(len(p) <= 900 for p in parts))
+        self.assertEqual(parts[-1], "Short one.")
