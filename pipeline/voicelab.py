@@ -35,6 +35,20 @@ class LabError(ValueError):
     pass
 
 
+def _why(e: Exception) -> str:
+    """The error plus where it happened, so a failed take says something useful."""
+    import traceback
+    frames = [f for f in traceback.extract_tb(e.__traceback__) if "/pipeline/" in f.filename] or \
+        traceback.extract_tb(e.__traceback__)
+    where = f" (in {Path(frames[-1].filename).name}:{frames[-1].lineno} {frames[-1].name})" if frames else ""
+    return f"{type(e).__name__}: {e}{where}"[:400]
+
+
+def traceback_print(e: Exception) -> None:
+    import traceback
+    traceback.print_exception(e)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -211,7 +225,7 @@ def run_pending(which: str = "all") -> tuple[int, int]:
             r = _wait_and_finish(take["id"], 15 * 60, time.time())
             done += r["state"] == "done"
         except Exception as e:
-            _update(take["id"], state="error", error=str(e)[:400])
+            traceback_print(e); _update(take["id"], state="error", error=_why(e))
             failed += 1
     for take in [t for t in takes() if t.get("state") == "queued" and wanted(t)]:
         if take["voice"] == voiceclone.VOICE_ID and voiceclone.clean_info().get("state") in ("queued", "running", "waiting"):
@@ -224,7 +238,7 @@ def run_pending(which: str = "all") -> tuple[int, int]:
             r = run_one(take["id"])
             done += r["state"] in ("done", "waiting")
         except Exception as e:
-            _update(take["id"], state="error", error=str(e)[:400])
+            traceback_print(e); _update(take["id"], state="error", error=_why(e))
             failed += 1
     return done, failed
 

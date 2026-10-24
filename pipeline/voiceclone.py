@@ -395,7 +395,11 @@ def _push_kaggle(name: str, files: dict[str, Path], code: str) -> str:
                 raise RuntimeError(resp.error)
         except Exception as first:
             print(f"  no earlier upload to update ({first}); creating the dataset")
-            resp = api.dataset_create_new(str(d), public=False, quiet=True, convert_to_csv=False)
+            try:
+                resp = api.dataset_create_new(str(d), public=False, quiet=True, convert_to_csv=False)
+            except ValueError as e:  # Kaggle sometimes answers a successful create with an empty body
+                print(f"  create answered oddly ({e}); checking whether it went through")
+                resp = None
             if getattr(resp, "error", None):
                 raise CloneError(f"Kaggle refused the audio upload: {resp.error}")
     for _ in range(40):  # Kaggle processes uploads before notebooks can read them
@@ -422,8 +426,15 @@ def _push_kaggle(name: str, files: dict[str, Path], code: str) -> str:
         try:
             api.kernels_push(str(d))
         except Exception as e:
-            print(f"  push with accelerator failed ({e}); retrying with the default GPU")
-            meta.pop("machine_shape")
+            if "409" in str(e):
+                # Kaggle won't take a new version while an earlier one (e.g. from a stopped worker) is
+                # still queued or running: push under a fresh name instead of waiting for it.
+                kernel_id = f"{user}/{name}-{datetime.now(timezone.utc):%m%d%H%M%S}"
+                print(f"  {name} is busy on Kaggle; pushing as {kernel_id}")
+                meta.update(id=kernel_id, title=kernel_id.split("/")[1])
+            else:
+                print(f"  push with accelerator failed ({e}); retrying with the default GPU")
+                meta.pop("machine_shape")
             (d / "kernel-metadata.json").write_text(json.dumps(meta))
             api.kernels_push(str(d))
     return kernel_id
