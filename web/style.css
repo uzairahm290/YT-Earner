@@ -774,3 +774,5 @@ a.btn-primary { color: var(--cue-ink); }
 .lab-badge.error { background: var(--grease-wash); color: var(--grease); }
 .lab-preview { margin: 8px 0 0; font-size: 14px; color: var(--ink); }
 .lab-take audio { height: 34px; max-width: 100%; }
+
+.lab-stage { margin: .35rem 0 0; font-size: .85rem; color: var(--graphite); }

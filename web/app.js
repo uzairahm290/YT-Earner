@@ -405,6 +405,20 @@ function renderTopics() {
 
 const LAB_STATE = { queued: "Queued", running: "Reading…", waiting: "On Kaggle…", done: "Ready", error: "Failed" };
 
+// What a take is waiting on, in plain words, so a short take never looks stuck.
+function labStage(t, lab) {
+  const mine = t.voice === lab.clone_voice;
+  const cleaning = ["queued", "running", "waiting"].includes(lab.voiceref?.clean?.state);
+  if (t.state === "queued") {
+    if (t.stage) return esc(t.stage) + ". It goes to Kaggle right after.";
+    if (mine && cleaning) return "First your voice sample is cleaned on Kaggle, then this take is converted there too. Kaggle's free GPU usually takes 5–15 minutes in all, longer when its queue is busy.";
+    return "Waiting for the worker to start. It installs its tools first, about 2 minutes.";
+  }
+  if (t.state === "running") return mine ? "Reading the text, then sending it to Kaggle to turn it into your voice." : "Reading the text. Almost there.";
+  if (t.state === "waiting") return "Converting into your voice on Kaggle's free GPU. Usually 3–10 minutes; the page updates by itself.";
+  return "";
+}
+
 function renderVoice() {
   const lab = state.lab || { takes: [], voices: {} };
   const ref = lab.voiceref;
@@ -454,6 +468,7 @@ function renderVoice() {
         <button class="sd-x" data-act="lab-del" data-id="${t.id}" aria-label="Delete take" title="Delete">×</button>
       </div>
       <p class="lab-preview">${esc(t.preview)}${t.chars > 160 ? "…" : ""}</p>
+      ${labStage(t, lab) ? `<p class="lab-stage">${labStage(t, lab)}</p>` : ""}
       ${t.state === "done" ? `<div class="lab-row"><audio controls preload="none" src="/api/voicelab/${t.id}.mp3"></audio>
         <a class="btn btn-quiet" href="/api/voicelab/${t.id}.mp3?download=1">Download MP3</a>
         <button class="btn btn-quiet" data-act="lab-reuse" data-id="${t.id}">Edit and redo</button></div>` : ""}
