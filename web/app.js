@@ -281,7 +281,7 @@ window.addEventListener("hashchange", async () => {
 async function route() {
   const r = parseRoute();
   if (r.view === "topics" && !state.topics) state.topics = await api("/api/topics");
-  if (r.view === "voice") state.lab = await api("/api/voicelab");
+  if (r.view === "voice") [state.lab, state.gen] = await Promise.all([api("/api/voicelab"), api("/api/persona/generate")]);
   if (r.view === "episode") {
     if (state.ep?.slug !== r.slug) await loadEpisode(r.slug);
     else { if (r.tab) state.tab = r.tab; render(); }
@@ -475,6 +475,8 @@ function renderVoice() {
       : "Built-in voices are ready in a minute or two."}</p>
   </section>
 
+  ${narratorSection()}
+
   <section class="lab-card">
     <h2>Takes</h2>
     ${lab.takes.length ? `<ol class="lab-takes">${lab.takes.map((t) => `<li class="lab-take ${t.state}">
@@ -498,7 +500,42 @@ function renderVoice() {
       ${t.state === "error" ? `<p class="v-note v-err">${esc(t.error || "")}</p>` : ""}
     </li>`).join("")}</ol>` : `<p class="hint">Nothing yet. Generate a take above.</p>`}
   </section>`;
-  if (busy || ["queued", "running", "waiting"].includes(ref?.clean?.state)) scheduleLabRefresh();
+  if (busy || ["queued", "running", "waiting"].includes(ref?.clean?.state) || genBusy()) scheduleLabRefresh();
+}
+
+const genBusy = () => ["queued", "running", "waiting"].includes(state.gen?.state);
+
+// The on-screen narrator for story videos: upload one, or draw a made-up one on Kaggle.
+function narratorSection() {
+  const g = state.gen || {};
+  const busy = genBusy();
+  const status = {
+    queued: "Waiting for the worker to start (about 2 minutes).",
+    running: "Sending it to Kaggle.",
+    waiting: `Drawing on Kaggle's free GPU${g.kaggle_status ? ` (Kaggle: ${esc(g.kaggle_status)})` : ""}. Usually 6–10 minutes; the page updates by itself.`,
+  }[g.state];
+  const cands = g.state === "done" ? (g.candidates || []) : [];
+  const v = encodeURIComponent(g.finished_at || "");
+  return `<section class="lab-card" id="narrator">
+    <h2>Narrator on screen</h2>
+    ${narratorCard()}
+    <h3 class="gen-h">✦ Make a narrator with AI</h3>
+    <p class="hint">Describe a made-up person. Kaggle draws ${6} photoreal options on a plain backdrop and cuts each one out; pick the best. It's never a real person, and story videos using it are marked as AI on upload.</p>
+    <textarea id="genDesc" rows="3" maxlength="300" ${busy ? "disabled" : ""}>${esc(g.description || g.default || "")}</textarea>
+    <div class="lab-row">
+      <label class="lab-field">Name <input type="text" id="genName" maxlength="40" value="${esc(g.name || state.status.persona?.name || "Ryan")}" ${busy ? "disabled" : ""}></label>
+      <button class="btn btn-primary" data-act="gen-start" ${busy ? "disabled" : ""}>${busy ? "Drawing…" : cands.length ? "Draw new options" : "Draw options"}</button>
+    </div>
+    ${status ? `<p class="lab-stage">${status}</p>` : ""}
+    ${g.state === "error" ? `<p class="v-note v-err">${esc(g.error || "")}</p>` : ""}
+    ${cands.length ? `<ul class="gen-grid">${cands.map((k) => `<li class="${g.chosen === k ? "on" : ""}">
+        <img src="/api/persona/generate/${k}.jpg?v=${v}" alt="Narrator option ${k + 1}" loading="lazy">
+        <div class="gen-actions">
+          <button class="btn ${g.chosen === k ? "" : "btn-primary"}" data-act="gen-use" data-k="${k}">${g.chosen === k ? "In use ✓" : "Use this"}</button>
+          <a class="btn btn-quiet" href="/api/persona/generate/${k}.jpg" download="narrator-${k + 1}.jpg">Photo</a>
+          <a class="btn btn-quiet" href="/api/persona/generate/${k}.png" download="narrator-${k + 1}-cutout.png">Cutout</a>
+        </div></li>`).join("")}</ul>` : ""}
+  </section>`;
 }
 
 let labTimer = null;
@@ -506,14 +543,16 @@ function scheduleLabRefresh() {
   clearTimeout(labTimer);
   labTimer = setTimeout(async () => {
     if (parseRoute().view !== "voice") return;
-    const snap = () => JSON.stringify([(state.lab?.takes || []).map((t) => t.state), state.lab?.voiceref?.clean?.state]);
+    const snap = () => JSON.stringify([(state.lab?.takes || []).map((t) => t.state), state.lab?.voiceref?.clean?.state,
+      state.gen?.state, state.gen?.kaggle_status]);
     const before = snap();
     try {
-      state.lab = await api("/api/voicelab");
+      [state.lab, state.gen] = await Promise.all([api("/api/voicelab"), api("/api/persona/generate")]);
       state.status.voiceref = state.lab.voiceref;
     } catch { /* server waking up */ }
     const typing = document.activeElement?.id === "labText";
-    if (snap() !== before && !typing) renderVoice();
+    const typing2 = typing || ["genDesc", "genName"].includes(document.activeElement?.id);
+    if (snap() !== before && !typing2) renderVoice();
     else scheduleLabRefresh();
   }, 8000);
 }
@@ -1018,8 +1057,8 @@ function narratorCard() {
     <div class="narrator-pic">${p ? `<img src="/api/persona/cutout.png?v=${v}" alt="Narrator cutout">` : `<span>No narrator yet</span>`}</div>
     <div class="narrator-body">
       <h3>Narrator on screen</h3>
-      <p class="hint">${p ? `<b>${esc(p.name)}</b>, ${p.how === "checkerboard removed" ? "fake checkerboard background removed" : "transparent PNG"}. Shown bottom left in every story video, plus a round badge top right.${p.ai_generated ? " Marked as AI-generated on upload, as YouTube requires." : ""}`
-        : "Upload a PNG with a transparent background (remove.bg is free), or an image with a fake checkerboard background, and it's cut out automatically."}</p>
+      <p class="hint">${p ? `<b>${esc(p.name)}</b>, ${p.how === "checkerboard removed" ? "fake checkerboard background removed" : p.ai_generated ? "made with AI" : "transparent PNG"}. Shown bottom left in every story video, plus a round badge top right.${p.ai_generated ? " Marked as AI-generated on upload, as YouTube requires." : ""}`
+        : `Upload a PNG with a transparent background (remove.bg is free), or an image with a fake checkerboard background, and it's cut out automatically. Or <a href="#/voice">make one with AI in the Voice studio</a>.`}</p>
       <div class="narrator-form">
         <input type="text" id="personaName" value="${esc(p?.name || "Ryan")}" aria-label="Narrator name" maxlength="40">
         <label class="narrator-ai"><input type="checkbox" id="personaAI" ${!p || p.ai_generated ? "checked" : ""}> This picture is AI-generated</label>
@@ -1800,7 +1839,7 @@ document.addEventListener("click", async (e) => {
           const data_url = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
           try {
             state.status.persona = await api("/api/persona", { method: "POST", body: { data_url, name: $("#personaName").value.trim() || "Narrator", ai_generated: $("#personaAI").checked } });
-            toast("Narrator saved"); renderEpisode();
+            toast("Narrator saved"); render();
           } catch (err) { toast(err.message, true); }
         };
         input.click(); break;
@@ -1814,6 +1853,23 @@ document.addEventListener("click", async (e) => {
           catch (err) { toast(err.message, true); }
         };
         input.click(); break;
+      }
+      case "gen-start": {
+        btn.disabled = true; btn.textContent = "Starting…";
+        try {
+          state.gen = await api("/api/persona/generate", { method: "POST", body: { description: $("#genDesc").value, name: $("#genName").value.trim() || "Narrator" } });
+          toast("Drawing your narrator on Kaggle.");
+        } catch (err) { toast(err.message, true); }
+        renderVoice(); break;
+      }
+      case "gen-use": {
+        btn.disabled = true;
+        try {
+          state.gen = await api("/api/persona/generate/use", { method: "POST", body: { k: Number(btn.dataset.k), name: $("#genName").value.trim() } });
+          state.status.persona = state.gen.persona;
+          toast("Narrator set. It's used in every story video.");
+        } catch (err) { toast(err.message, true); }
+        renderVoice(); break;
       }
       case "lab-enhance": {
         const input = $("#labEnhanceFile");

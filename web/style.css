@@ -781,3 +781,17 @@ a.btn-primary { color: var(--cue-ink); }
 .lab-compare label { display: flex; flex-direction: column; gap: .2rem; font-size: .8rem; font-weight: 600;
   color: var(--graphite); text-transform: uppercase; letter-spacing: .04em; }
 .lab-compare audio { max-width: 100%; }
+.gen-h { margin: 18px 0 4px; font-size: 15px; }
+#narrator textarea { width: 100%; font: 14px/1.45 var(--sans); padding: 8px 10px; border: 1px solid var(--rule-strong);
+  border-radius: var(--r-sm); background: var(--paper); color: var(--ink); resize: vertical; }
+#narrator .narrator { margin: 0 0 4px; border: 0; padding: 0; background: none; }
+#narrator input[type=text] { font: 14px/1.2 var(--sans); padding: 7px 9px; border: 1px solid var(--rule-strong);
+  border-radius: var(--r-sm); background: var(--paper); color: var(--ink); }
+.gen-grid { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.gen-grid li { border: 1px solid var(--rule); border-radius: var(--r-sm); overflow: hidden; background: var(--paper); }
+.gen-grid li.on { border-color: var(--cue); box-shadow: 0 0 0 2px var(--cue); }
+.gen-grid img { display: block; width: 100%; aspect-ratio: 832 / 1216; object-fit: cover; background: var(--rule); }
+.gen-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; }
+.gen-actions .btn { padding: 5px 9px; font-size: 13px; }
+#narrator .narrator h3 { display: none; }
