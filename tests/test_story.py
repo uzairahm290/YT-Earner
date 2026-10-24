@@ -321,6 +321,32 @@ class VoiceStudio(unittest.TestCase):
         self.assertEqual(voiceclone.clean_info()["state"], "done")
         self.assertEqual(voicelab.get(t["id"])["state"], "done")
 
+    @unittest.skipUnless(HAVE, "ffmpeg not installed")
+    def test_enhance_a_recording_through_the_worker(self):
+        from pipeline import voicelab
+        m4a = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=180:d=6", "-c:a", "aac",
+                              "-f", "adts", "-"], capture_output=True, check=True).stdout
+        with self.assertRaises(voicelab.LabError):
+            voicelab.create_enhance(b"tiny", "audio/mp4", "x.m4a")
+        t = voicelab.create_enhance(m4a, "audio/x-m4a", "Episode 3 take.m4a", mute_others=False)
+        self.assertEqual((t["voice"], t["name"], t["state"]), (voicelab.ENHANCE, "Episode 3 take", "queued"))
+        self.assertTrue(voicelab.on_kaggle(t))
+        self.assertEqual(worker.main(check_only=True), 0)
+        with mock.patch.dict(os.environ, {"DOCU_MOCK_VOICECLONE": "1"}):
+            self.assertEqual(worker.main(), 0)
+        done = voicelab.get(t["id"])
+        self.assertEqual(done["state"], "done", done)
+        self.assertAlmostEqual(done["duration"], 6, delta=0.5)
+        self.assertTrue(voicelab.audio(t["id"]))
+        self.assertEqual(voicelab.original(t["id"])[1], m4a)  # kept for the before/after
+        voicelab.delete(t["id"])
+        self.assertIsNone(voicelab.original(t["id"]))
+
+    def test_enhance_notebook_is_valid_python(self):
+        import ast, json
+        from pipeline import enhance
+        ast.parse(enhance.KERNEL.replace("__JOB__", json.dumps({"mute_others": True})))
+
     def test_long_paragraphs_are_read_in_pieces(self):
         from pipeline import voicelab
         long = " ".join(["This is one sentence of a long paragraph."] * 60)

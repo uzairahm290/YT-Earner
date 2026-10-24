@@ -423,7 +423,8 @@ class LabRequest(BaseModel):
 def _lab_view() -> dict:
     return {"takes": list(reversed(voicelab.takes())), "voiceref": voiceclone.reference_info(),
             "clone_voice": voiceclone.VOICE_ID, "voices": voice.voice_choices(),
-            "max_chars": voicelab.MAX_CHARS}
+            "max_chars": voicelab.MAX_CHARS, "enhance_voice": voicelab.ENHANCE,
+            "enhance_max_mb": voicelab.enhance.MAX_BYTES // 1048576}
 
 
 @app.get("/api/voicelab")
@@ -448,6 +449,40 @@ def voicelab_create(body: LabRequest):
     return _lab_view()
 
 
+class EnhanceRequest(BaseModel):
+    data_url: str
+    name: str = "Recording"
+    mute_others: bool = True
+
+
+@app.post("/api/voicelab/enhance")
+def voicelab_enhance(body: EnhanceRequest):
+    """A recording of your own voice to make clearer: noise and other voices out, same voice."""
+    import base64 as b64
+    m = re.match(r"data:(audio/[a-z0-9.+-]+|video/[a-z0-9.+-]+);base64,(.+)", body.data_url or "", re.S)
+    if not m:
+        raise HTTPException(422, "Upload an audio file (M4A, MP3, WAV) or a phone video.")
+    try:
+        voicelab.create_enhance(b64.b64decode(m.group(2)), m.group(1), body.name, body.mute_others)
+    except voicelab.LabError as e:
+        raise HTTPException(422, str(e))
+    if INLINE_WORKER:
+        start_job("voicelab", "Voice studio", voicelab.run_pending)
+    else:
+        _dispatch_worker()
+    return _lab_view()
+
+
+@app.get("/api/voicelab/{take_id}/original")
+def voicelab_original(take_id: str):
+    found = voicelab.original(take_id)
+    if not found:
+        raise HTTPException(404, "Not there.")
+    mime, data = found
+    return Response(data, media_type="audio/mp4" if mime.startswith("video/") else mime,
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
 @app.get("/api/voicelab/{take_id}.mp3")
 def voicelab_audio(take_id: str, download: int = 0):
     data = voicelab.audio(take_id)
@@ -455,7 +490,10 @@ def voicelab_audio(take_id: str, download: int = 0):
         raise HTTPException(404, "Not ready.")
     headers = {"Cache-Control": "private, max-age=3600"}
     if download:
-        headers["Content-Disposition"] = f'attachment; filename="voice-{take_id}.mp3"'
+        take = voicelab.get(take_id) or {}
+        base = re.sub(r"[^A-Za-z0-9 _-]+", "", take.get("name", "")).strip().replace(" ", "-")[:50]
+        fname = f"{base}-enhanced.mp3" if take.get("voice") == voicelab.ENHANCE and base else f"voice-{take_id}.mp3"
+        headers["Content-Disposition"] = f'attachment; filename="{fname}"'
     return Response(data, media_type="audio/mpeg", headers=headers)
 
 

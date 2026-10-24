@@ -6,15 +6,19 @@ Not tied to a story. You paste text in the dashboard's Voice page; each request 
             → built-in voice: mastered and stored, done
             → your voice: sent to Kaggle where OpenVoice swaps the timbre for yours (same notebook as
               the story narration), collected by this or a later worker run, mastered, stored
+    or an uploaded recording of you ("Enhance my recording"): cleaned on Kaggle and polished, the
+    voice itself untouched (see enhance.py)
 
 Takes live desk-wide in the database (_settings/voicelab/...). Only one take in your voice is on
-Kaggle at a time, so a slow queue never gets two notebooks overwriting each other.
+Kaggle at a time (and one recording being enhanced), so a slow queue never gets two notebooks
+overwriting each other.
 """
 from __future__ import annotations
 
 import base64
 import json
 import re
+import subprocess
 import tempfile
 import time
 import uuid
@@ -23,12 +27,18 @@ from pathlib import Path
 
 from .config import load_config
 from .store import get_store
-from . import voice, voiceclone
+from . import enhance, voice, voiceclone
 
 SETTINGS = "_settings"
 INDEX = "voicelab/index.json"
 MAX_CHARS = 12000  # about 13 minutes of speech
 KERNEL_NAME = "docu-voice-lab"
+ENHANCE = "enhance"            # "voice" of a take that cleans up your own recording instead of reading text
+ENHANCE_KERNEL = "docu-voice-enhance"
+
+
+def on_kaggle(t: dict) -> bool:
+    return t["voice"] in (voiceclone.VOICE_ID, ENHANCE)
 
 
 class LabError(ValueError):
@@ -98,10 +108,36 @@ def create(text: str, voice_id: str, speed: float) -> dict:
     return take
 
 
+def create_enhance(data: bytes, mime: str, name: str, mute_others: bool = True) -> dict:
+    """A recording of your own voice to make clearer (the voice itself isn't changed)."""
+    if len(data) > enhance.MAX_BYTES:
+        raise LabError(f"That file is {len(data) / 1048576:.0f} MB; the limit is {enhance.MAX_BYTES // 1048576} MB "
+                       "(about 30 minutes of phone audio). Split it into parts.")
+    if len(data) < 5000:
+        raise LabError("That file is too small to be a recording.")
+    name = re.sub(r"\.[a-z0-9]{2,4}$", "", (name or "").strip(), flags=re.I)[:60] or "Recording"
+    take = {"id": uuid.uuid4().hex[:10], "voice": ENHANCE, "speed": 1.0, "chars": 0, "name": name,
+            "preview": name, "bytes": len(data), "mute_others": bool(mute_others), "state": "queued",
+            "created_at": _now()}
+    get_store().write(SETTINGS, f"voicelab/{take['id']}.src.b64", f"{mime};" + base64.b64encode(data).decode())
+    items = takes()
+    items.append(take)
+    _save_all(items)
+    return take
+
+
+def original(take_id: str) -> tuple[str, bytes] | None:
+    raw = get_store().read(SETTINGS, f"voicelab/{take_id}.src.b64")
+    if not raw:
+        return None
+    mime, _, b64 = raw.partition(";")
+    return mime, base64.b64decode(b64)
+
+
 def delete(take_id: str) -> None:
     store = get_store()
     _save_all([t for t in takes() if t["id"] != take_id])
-    for name in (f"voicelab/{take_id}.txt", f"voicelab/{take_id}.mp3.b64"):
+    for name in (f"voicelab/{take_id}.txt", f"voicelab/{take_id}.mp3.b64", f"voicelab/{take_id}.src.b64"):
         store.write(SETTINGS, name, "")
 
 
@@ -182,6 +218,8 @@ def run_one(take_id: str) -> dict:
         raise LabError("That take was deleted.")
     started = time.time()
     _update(take_id, state="running", started_at=_now(), error=None, stage=None)
+    if take["voice"] == ENHANCE:
+        return _enhance_start(take, started)
     print(f"[voice studio] take {take_id}: {take['chars']} characters, {take['voice']}")
     track, beats = _read(take)
     if take["voice"] != voiceclone.VOICE_ID or os.getenv("DOCU_MOCK_VOICECLONE") == "1":
@@ -197,6 +235,57 @@ def run_one(take_id: str) -> dict:
     return _wait_and_finish(take_id, voiceclone.KAGGLE_WAIT, started)
 
 
+def _enhance_start(take: dict, started: float) -> dict:
+    import os
+    print(f"[voice studio] enhancing {take['name']!r} ({take['bytes'] // 1024} KB)")
+    found = original(take["id"])
+    if not found:
+        raise LabError("The uploaded recording is missing. Upload it again.")
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "upload.src").write_bytes(found[1])
+        try:
+            seconds = enhance.prepare(d / "upload.src", d / "input.flac")
+        except ValueError as e:
+            raise LabError(str(e))
+        if os.getenv("DOCU_MOCK_VOICECLONE") == "1":  # tests: skip Kaggle, polish only
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(d / "input.flac"), str(d / "enhanced.wav")],
+                           check=True)
+            return _store_enhanced(take["id"], d / "enhanced.wav", {"steps": ["(demo: no GPU cleanup)"]}, started)
+        job = {"mute_others": take.get("mute_others", True)}
+        kernel_id = voiceclone._push_kaggle(ENHANCE_KERNEL, {"input.flac": d / "input.flac"},
+                                            enhance.KERNEL.replace("__JOB__", json.dumps(job)))
+    _update(take["id"], kernel=kernel_id, kaggle_status="queued", pushed_at=_now(), source_s=round(seconds, 1))
+    return _wait_and_finish(take["id"], voiceclone.KAGGLE_WAIT, started)
+
+
+def _store_enhanced(take_id: str, wav: Path, report: dict, started: float) -> dict:
+    mp3 = enhance.polish_to_mp3(wav, wav.with_suffix(".mp3")).read_bytes()
+    get_store().write(SETTINGS, f"voicelab/{take_id}.mp3.b64", base64.b64encode(mp3).decode())
+    import wave
+    with wave.open(str(wav), "rb") as w:
+        seconds = w.getnframes() / w.getframerate()
+    return _update(take_id, state="done", finished_at=_now(), duration=round(seconds, 1),
+                   size_kb=len(mp3) // 1024, seconds_taken=round(time.time() - started), error=None,
+                   steps=report.get("steps", []), skipped=report.get("skipped", []))
+
+
+def _collect_enhanced(take_id: str, kernel_id: str, started: float) -> dict:
+    api, _ = voiceclone._api()
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        try:
+            api.kernels_output(kernel_id, str(d))
+        except Exception as e:
+            print(f"  couldn't download notebook output: {e}")
+        report = json.loads((d / "result.json").read_text()) if (d / "result.json").exists() else {}
+        if report.get("error") or not (d / "enhanced.wav").exists():
+            from .illustrate import _log_tail
+            raise LabError(f"The cleanup notebook failed: {report.get('error') or 'no audio came back'}"
+                           f" | {_log_tail(d)[-250:]} (full log at kaggle.com/code/{kernel_id})")
+        return _store_enhanced(take_id, d / "enhanced.wav", report, started)
+
+
 def _wait_and_finish(take_id: str, seconds: float, started: float) -> dict:
     from .illustrate import wait
     take = get(take_id)
@@ -206,6 +295,8 @@ def _wait_and_finish(take_id: str, seconds: float, started: float) -> dict:
         if age_h > 6:
             raise LabError("Kaggle never got to it (6 hours in its queue). Generate it again later.")
         return _update(take_id, state="waiting", kaggle_status=state)
+    if take["voice"] == ENHANCE:
+        return _collect_enhanced(take_id, take["kernel"], started)
     with tempfile.TemporaryDirectory() as d:
         wav = voiceclone.collect(take["kernel"], Path(d))
         converted = voiceclone._read_wav(wav)
@@ -216,9 +307,8 @@ def run_pending(which: str = "all") -> tuple[int, int]:
     """Worker entry: finish takes waiting on Kaggle, then start queued ones. Only one take in your
     voice is on Kaggle at a time (they share one notebook).
     which: "builtin" (quick, CPU only), "clone" (your voice, via Kaggle) or "all"."""
-    def wanted(t):
-        mine = t["voice"] == voiceclone.VOICE_ID
-        return which == "all" or (which == "clone") == mine
+    def wanted(t):  # "clone" = everything that goes to Kaggle (your voice, and enhancing a recording)
+        return which == "all" or (which == "clone") == on_kaggle(t)
     done = failed = 0
     for take in [t for t in takes() if t.get("state") == "waiting" and wanted(t)]:
         try:
@@ -231,8 +321,8 @@ def run_pending(which: str = "all") -> tuple[int, int]:
         if take["voice"] == voiceclone.VOICE_ID and voiceclone.clean_info().get("state") in ("queued", "running", "waiting"):
             _update(take["id"], stage="Waiting for your voice sample to finish cleaning")
             continue  # the cleanup is still on Kaggle; this take uses the clean sample once it's back
-        if take["voice"] == voiceclone.VOICE_ID and any(
-                t.get("state") == "waiting" and t["voice"] == voiceclone.VOICE_ID for t in takes()):
+        if on_kaggle(take) and any(
+                t.get("state") == "waiting" and t["voice"] == take["voice"] for t in takes()):
             continue  # its turn comes when the one on Kaggle is collected
         try:
             r = run_one(take["id"])
