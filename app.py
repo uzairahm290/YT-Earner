@@ -401,9 +401,27 @@ def voiceref_upload(body: VoiceRef):
     if not m:
         raise HTTPException(422, "Upload an audio file (M4A, MP3 or WAV).")
     try:
-        return voiceclone.save_reference(b64.b64decode(m.group(2)), m.group(1), body.name)
+        meta = voiceclone.save_reference(b64.b64decode(m.group(2)), m.group(1), body.name)
     except voiceclone.CloneError as e:
         raise HTTPException(422, str(e))
+    # Clean it on Kaggle right away: background voices and noise out, only your voice left.
+    if INLINE_WORKER:
+        start_job("voiceref", "Cleaning your voice sample", voiceclone.clean_reference)
+    else:
+        _dispatch_worker()
+    return meta
+
+
+@app.get("/api/voiceref/audio")
+def voiceref_audio(which: str = "original"):
+    """Your sample as uploaded, or after the cleanup, to compare by ear."""
+    import base64 as b64
+    raw = get_store().read(voiceclone.SETTINGS, "voiceref/clean.b64" if which == "clean" else "voiceref/audio.b64")
+    if not raw:
+        raise HTTPException(404, "Not there yet.")
+    mime, _, data = raw.partition(";")
+    return Response(b64.b64decode(data), media_type="audio/mp4" if mime == "video/mp4" else mime,
+                    headers={"Cache-Control": "private, max-age=60"})
 
 
 @app.delete("/api/voiceref")

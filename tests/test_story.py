@@ -246,3 +246,32 @@ class OwnVoice(unittest.TestCase):
         pack = youtube.package(self.ep)["long"]
         self.assertTrue(pack["synthetic"])
         self.assertIn("creator's own voice", pack["description"])
+
+
+class VoiceSampleCleanup(unittest.TestCase):
+    def tearDown(self):
+        from pipeline import voiceclone
+        voiceclone.remove_reference()
+
+    @unittest.skipUnless(HAVE, "ffmpeg not installed")
+    def test_upload_queues_a_cleanup_the_worker_runs_and_narration_uses(self):
+        from pipeline import voiceclone
+        wav = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=140:d=8", "-f", "wav", "-"],
+                             capture_output=True, check=True).stdout
+        meta = voiceclone.save_reference(wav, "audio/wav", "Me")
+        self.assertEqual(meta["clean"]["state"], "queued")
+        self.assertTrue(voiceclone.clean_pending())
+        self.assertEqual(worker.main(check_only=True), 0)  # counts as work
+        with mock.patch.dict(os.environ, {"DOCU_MOCK_VOICECLONE": "1"}):
+            self.assertEqual(worker.main(), 0)
+        self.assertEqual(voiceclone.clean_info()["state"], "done")
+        self.assertFalse(voiceclone.clean_pending())
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            ref = voiceclone.reference_wav(Path(d))
+            self.assertGreater(ref.stat().st_size, 1000)
+        # a new sample replaces the clean copy and queues a fresh cleanup
+        voiceclone.save_reference(wav, "audio/wav", "Me again")
+        self.assertEqual(voiceclone.clean_info()["state"], "queued")
+        self.assertFalse(get_store().read("_settings", "voiceref/clean.b64"))

@@ -201,7 +201,23 @@ async function poll() {
 // so their state is read from the episode list (and the open story, for render progress).
 let lastWorkerCheck = 0;
 const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}|${e.shorts_state}|${e.shorts_made}|${e.youtube_state}|${e.uploaded}`;
+let lastRefCheck = 0;
+async function watchVoiceRef() {
+  const c = state.status?.voiceref?.clean;
+  if (!c || !["queued", "running", "waiting"].includes(c.state) || Date.now() - lastRefCheck < 10000) return;
+  lastRefCheck = Date.now();
+  const before = c.state;
+  state.status = await api("/api/status");
+  const now = state.status.voiceref?.clean?.state;
+  if (now !== before) {
+    if (now === "done") toast("Your voice sample is clean. Compare before and after on the story page.");
+    if (now === "error") toast("Cleaning your voice sample failed.", true);
+    if (state.ep && !state.dirty) renderEpisode();
+  }
+}
+
 async function watchVoice() {
+  watchVoiceRef().catch(() => {});
   const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state, e.youtube_state].some((s) => ["queued", "running", "waiting"].includes(s));  // voice can wait on Kaggle too
   if (!state.episodes.some(busy) || Date.now() - lastWorkerCheck < 8000) return;
   lastWorkerCheck = Date.now();
@@ -454,7 +470,7 @@ function nextStep(ep, running, flags) {
       const msg = state.dirty ? "<strong>You have unsaved edits.</strong> Save them to re-check the script."
         : ep.lint?.ok ? "<strong>Read it out loud.</strong> Fix anything that sounds off, then approve it for voice and visuals."
         : `<strong>${flags.size} ${flags.size === 1 ? "beat has" : "beats have"} problems marked in red.</strong> Fix them and save to approve.`;
-      return box(msg, `${voicePick()}<button class="btn btn-approve" data-act="approve" ${ok ? "" : "disabled"}>Approve and narrate</button>`);
+      return box(msg + voiceRefNote(), `${voicePick()}<button class="btn btn-approve" data-act="approve" ${ok ? "" : "disabled"}>Approve and narrate</button>`);
     }
     case "approved": {
       const job = ep.meta?.voice || {};
@@ -478,7 +494,7 @@ function nextStep(ep, running, flags) {
         return box(`<strong>Narration failed.</strong> ${esc(job.error || "")}`,
           `${voicePick()}<button class="btn btn-primary" data-act="record-voice">Try again</button>`);
       }
-      return box(`<strong>Approved.</strong> Record the narration when you're ready.`,
+      return box(`<strong>Approved.</strong> Record the narration when you're ready.${voiceRefNote()}`,
         `${voicePick()}<button class="btn btn-primary" data-act="record-voice">Record narration</button>
          <button class="btn" data-act="unapprove">Reopen for edits</button>`);
     }
@@ -550,6 +566,25 @@ function musicPick() {
 }
 
 let musicAudio = null;
+
+// The voice sample's cleanup status, with before/after players once it's done.
+function voiceRefNote() {
+  const r = state.status.voiceref;
+  if (!r) return "";
+  const c = r.clean || {};
+  const v = encodeURIComponent(c.finished_at || r.updated_at || "");
+  if (["queued", "running", "waiting"].includes(c.state)) {
+    return `<p class="vr-note">Your voice sample is being cleaned on Kaggle's GPU (background voices and noise out)${c.kaggle_status ? `: Kaggle says <b>${esc(c.kaggle_status)}</b>` : ""}. You can record narration now; it uses the clean sample once it's ready.</p>`;
+  }
+  if (c.state === "error") return `<p class="vr-note v-err">Couldn't clean your voice sample: ${esc(c.error || "")}. Narration will use it as uploaded.</p>`;
+  if (c.state === "done") {
+    const removed = c.total_s && c.kept_s ? Math.max(0, Math.round(c.total_s - c.kept_s)) : null;
+    return `<div class="vr-note"><span>Your voice sample: ${esc((c.steps || []).join(", ") || "cleaned")}${removed ? `, ${removed} s cut` : ""}. Kept ${c.kept_s || "?"} s of just you.${c.kept_s && c.kept_s < 20 ? " <b>That's short: record a longer sample for a better match.</b>" : ""}</span>
+      <span class="vr-play"><label>Before <audio controls preload="none" src="/api/voiceref/audio?which=original&v=${v}"></audio></label>
+      <label>After <audio controls preload="none" src="/api/voiceref/audio?which=clean&v=${v}"></audio></label></span></div>`;
+  }
+  return "";
+}
 
 function voiceName(id) {
   if (id && id === state.status.clone_voice) return "your voice (American accent)";

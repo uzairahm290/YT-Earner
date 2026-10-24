@@ -743,3 +743,8 @@ a.btn-primary { color: var(--cue-ink); }
 .narrator-form input[type=text] { font: 14px/1.2 var(--sans); padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: var(--r-sm); background: var(--paper); color: var(--ink); width: 140px; }
 .narrator-ai { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--graphite); }
 .field.field-inline input { width: 90px; padding: 8px 10px; font: 15px/1.2 var(--sans); color: var(--ink); background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
+.vr-note { flex-basis: 100%; margin: 8px 0 0; font-size: 13.5px; color: var(--graphite); }
+.vr-note.v-err { color: var(--grease); }
+.vr-play { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; }
+.vr-play label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; }
+.vr-play audio { height: 30px; max-width: 240px; }
