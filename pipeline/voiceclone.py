@@ -285,6 +285,16 @@ def clean_pending() -> bool:
     return clean_info().get("state") in ("queued", "waiting")
 
 
+def resume_abandoned_clean() -> bool:
+    """Worker start: only one worker runs at a time, so a cleanup still marked 'running' belongs to a
+    worker that was stopped. Pick it up again: collect it if it reached Kaggle, otherwise start over."""
+    job = clean_info()
+    if job.get("state") != "running":
+        return False
+    _set_clean(state="waiting" if job.get("kernel") else "queued")
+    return True
+
+
 def clean_reference() -> dict:
     """Worker: send the voice sample to Kaggle for cleanup (or collect a cleanup still running)."""
     job = clean_info()

@@ -100,6 +100,19 @@ def text_of(take_id: str) -> str:
     return get_store().read(SETTINGS, f"voicelab/{take_id}.txt") or ""
 
 
+def resume_abandoned() -> list[str]:
+    """Worker start: a take still 'running' belongs to a worker that was stopped (only one runs at a
+    time). Collect it from Kaggle if it got there, otherwise read it again."""
+    items, back = takes(), []
+    for t in items:
+        if t.get("state") == "running":
+            t["state"] = "waiting" if t.get("kernel") else "queued"
+            back.append(t["id"])
+    if back:
+        _save_all(items)
+    return back
+
+
 def pending() -> list[str]:
     return [t["id"] for t in takes() if t.get("state") in ("queued", "waiting")]
 

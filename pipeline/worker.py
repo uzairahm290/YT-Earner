@@ -136,11 +136,14 @@ def main(check_only: bool = False) -> int:
         print(f"  released abandoned job: {slug}")
     from . import illustrate
     queued = {kind: pending(kind) for kind in KINDS}
-    from . import voiceclone
+    from . import voiceclone, voicelab
+    if voiceclone.resume_abandoned_clean():
+        print("  picked up the voice sample cleanup a stopped worker left behind")
+    for take_id in voicelab.resume_abandoned():
+        print(f"  picked up voice studio take {take_id} a stopped worker left behind")
     queued["kaggle (collect)"] = illustrate.waiting()  # notebooks still drawing from an earlier run
     queued["voice (collect)"] = voiceclone.waiting()   # narrations still converting on Kaggle
     queued["voice sample cleanup"] = ["your voice"] if voiceclone.clean_pending() else []
-    from . import voicelab
     queued["voice studio"] = voicelab.pending()
     total = sum(len(v) for v in queued.values())
     if check_only:

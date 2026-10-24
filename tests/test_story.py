@@ -304,6 +304,23 @@ class VoiceStudio(unittest.TestCase):
         t = voicelab.create("Hello there.", voiceclone.VOICE_ID, 5)
         self.assertEqual(t["speed"], 1.2)  # clamped
 
+    @unittest.skipUnless(HAVE, "ffmpeg not installed")
+    def test_work_a_stopped_worker_left_running_is_picked_up_again(self):
+        from pipeline import voicelab, voiceclone
+        wav = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=140:d=8", "-f", "wav", "-"],
+                             capture_output=True, check=True).stdout
+        voiceclone.save_reference(wav, "audio/wav", "Me")
+        voiceclone._set_clean(state="running", started_at="2026-01-01T00:00:00+00:00")  # worker was stopped
+        t = voicelab.create("Hello there, this is me.", voiceclone.VOICE_ID, 1.0)
+        voicelab._update(t["id"], state="running")
+        self.assertEqual(worker.main(check_only=True), 0)  # still counts as work
+        self.assertEqual(voiceclone.clean_info()["state"], "queued")
+        self.assertEqual(voicelab.get(t["id"])["state"], "queued")
+        with mock.patch.dict(os.environ, {"DOCU_MOCK_VOICECLONE": "1"}):
+            self.assertEqual(worker.main(), 0)
+        self.assertEqual(voiceclone.clean_info()["state"], "done")
+        self.assertEqual(voicelab.get(t["id"])["state"], "done")
+
     def test_long_paragraphs_are_read_in_pieces(self):
         from pipeline import voicelab
         long = " ".join(["This is one sentence of a long paragraph."] * 60)
