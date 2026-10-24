@@ -354,3 +354,31 @@ class VoiceStudio(unittest.TestCase):
         self.assertGreater(len(parts), 2)
         self.assertTrue(all(len(p) <= 900 for p in parts))
         self.assertEqual(parts[-1], "Short one.")
+
+
+class NarratorByAI(unittest.TestCase):
+    def tearDown(self):
+        from pipeline import persona
+        persona.remove()
+        get_store().write("_settings", "persona/gen.json", "")
+
+    def test_draw_pick_and_use_a_made_up_narrator(self):
+        import ast, json
+        from pipeline import narrator_gen, persona
+        ast.parse(narrator_gen.KERNEL.replace("__JOB__", json.dumps({"x": 1})))
+        with self.assertRaises(narrator_gen.NarratorGenError):
+            narrator_gen.request("a man who looks like Elon Musk")
+        job = narrator_gen.request("", "Ryan")
+        self.assertEqual(job["description"], narrator_gen.DEFAULT)
+        self.assertEqual(worker.main(check_only=True), 0)
+        with mock.patch.dict(os.environ, {"DOCU_MOCK_NARRATOR": "1"}):
+            self.assertEqual(worker.main(), 0)
+        job = narrator_gen.info()
+        self.assertEqual((job["state"], job["candidates"]), ("done", [0, 1, 2]))
+        self.assertTrue(narrator_gen.candidate(1, "jpg"))
+        meta = narrator_gen.use(1)
+        self.assertTrue(meta["ai_generated"])
+        self.assertEqual(meta["name"], "Ryan")
+        self.assertEqual(meta["how"], "transparent")
+        self.assertTrue(persona.cutout_png())
+        self.assertEqual(narrator_gen.info()["chosen"], 1)

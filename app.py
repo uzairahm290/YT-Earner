@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import audio, illustrate, persona, research, script, shorts, story, thumbnail, topics, visuals, voice, voiceclone, voicelab, youtube
+from pipeline import audio, illustrate, narrator_gen, persona, research, script, shorts, story, thumbnail, topics, visuals, voice, voiceclone, voicelab, youtube
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -529,6 +529,63 @@ def voiceref_remove():
 @app.get("/api/persona")
 def persona_info():
     return persona.info() or {}
+
+
+class NarratorGen(BaseModel):
+    description: str = ""
+    name: str = "Narrator"
+
+
+def _narrator_view() -> dict:
+    job = narrator_gen.info()
+    if job.get("state") == "waiting" and not INLINE_WORKER and time.time() - _last_collect_wake[0] > 600:
+        _last_collect_wake[0] = time.time()
+        _dispatch_worker()
+    return {**job, "default": narrator_gen.DEFAULT, "persona": persona.info()}
+
+
+@app.get("/api/persona/generate")
+def narrator_gen_status():
+    return _narrator_view()
+
+
+@app.post("/api/persona/generate")
+def narrator_gen_start(body: NarratorGen):
+    """Draw a made-up narrator on Kaggle: a few candidates, each cut out, to pick from."""
+    try:
+        narrator_gen.request(body.description, body.name)
+    except narrator_gen.NarratorGenError as e:
+        raise HTTPException(422, str(e))
+    if INLINE_WORKER:
+        start_job("narrator", "Drawing a narrator", narrator_gen.run)
+    else:
+        _dispatch_worker()
+    return _narrator_view()
+
+
+@app.get("/api/persona/generate/{k}.{kind}")
+def narrator_gen_picture(k: int, kind: str):
+    if kind not in ("jpg", "png"):
+        raise HTTPException(404, "Not there.")
+    data = narrator_gen.candidate(k, kind)
+    if not data:
+        raise HTTPException(404, "Not there.")
+    return Response(data, media_type="image/jpeg" if kind == "jpg" else "image/png",
+                    headers={"Cache-Control": "private, max-age=300"})
+
+
+class NarratorPick(BaseModel):
+    k: int
+    name: str = ""
+
+
+@app.post("/api/persona/generate/use")
+def narrator_gen_use(body: NarratorPick):
+    try:
+        narrator_gen.use(body.k, body.name or None)
+    except (narrator_gen.NarratorGenError, persona.PersonaError) as e:
+        raise HTTPException(422, str(e))
+    return _narrator_view()
 
 
 @app.get("/api/persona/cutout.png")

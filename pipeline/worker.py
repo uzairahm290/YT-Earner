@@ -136,7 +136,9 @@ def main(check_only: bool = False) -> int:
         print(f"  released abandoned job: {slug}")
     from . import illustrate
     queued = {kind: pending(kind) for kind in KINDS}
-    from . import voiceclone, voicelab
+    from . import narrator_gen, voiceclone, voicelab
+    if narrator_gen.resume_abandoned():
+        print("  picked up the narrator drawing a stopped worker left behind")
     if voiceclone.resume_abandoned_clean():
         print("  picked up the voice sample cleanup a stopped worker left behind")
     for take_id in voicelab.resume_abandoned():
@@ -145,6 +147,7 @@ def main(check_only: bool = False) -> int:
     queued["voice (collect)"] = voiceclone.waiting()   # narrations still converting on Kaggle
     queued["voice sample cleanup"] = ["your voice"] if voiceclone.clean_pending() else []
     queued["voice studio"] = voicelab.pending()
+    queued["narrator"] = ["AI narrator"] if narrator_gen.pending() else []
     total = sum(len(v) for v in queued.values())
     if check_only:
         print(f"{total} queued: " + (", ".join(f"{k} {s}" for k, v in queued.items() for s in v) or "nothing"))
@@ -155,6 +158,9 @@ def main(check_only: bool = False) -> int:
     done = failed = 0
     if queued["kaggle (collect)"]:
         done, failed = illustrate.collect_waiting()
+    if queued["narrator"]:
+        result = narrator_gen.run()
+        done, failed = done + (result.get("state") in ("done", "waiting")), failed + (result.get("state") == "error")
     if queued["voice studio"]:  # built-in voices first: they take a minute and never wait on Kaggle
         d, f = voicelab.run_pending("builtin")
         done, failed = done + d, failed + f
