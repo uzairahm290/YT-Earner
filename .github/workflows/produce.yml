@@ -71,10 +71,13 @@ jobs:
 
       - name: Install the worker's tools
         if: steps.queue.outputs.work == 'yes'
+        timeout-minutes: 12   # normally ~1.5 min; a stalled download fails here instead of hanging
         run: |
-          # CPU-only PyTorch (~200 MB instead of ~2 GB) for the parallax depth model
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements-worker.txt "kaggle>=2.0"
+          # CPU-only PyTorch (~200 MB instead of ~2 GB) for the parallax depth model. Optional:
+          # if its server stalls, videos fall back to a plain slow zoom and voice work doesn't need it.
+          timeout 300 pip install --timeout 30 --retries 3 torch --index-url https://download.pytorch.org/whl/cpu \
+            || echo "::warning::PyTorch didn't install; parallax is off for this run"
+          pip install --timeout 30 --retries 5 -r requirements-worker.txt "kaggle>=2.0"
           which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
 
       - name: Cache the voice model (~350 MB)
