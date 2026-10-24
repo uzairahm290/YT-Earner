@@ -341,13 +341,13 @@ def _overlay_chain(base: str, overlays: list[tuple[Path, float, float]], first_i
 
 
 def make_segment(index: int, asset: Path, kind: str, seconds: float, overlays: list[tuple[Path, float, float]],
-                 out: Path, frames_dir: list[Path] | None = None) -> Path:
+                 out: Path, frames_dir: list[Path] | None = None, parallax: bool = True) -> Path:
     """One shot. kind: video | image | card. frames_dir: an animated card's entrance frames."""
     c = cfg()
     frames = max(1, round(seconds * c["fps"]))
     enc = [*_intermediate(), "-frames:v", str(frames)]
 
-    if kind == "image" and c.get("parallax"):
+    if kind == "image" and parallax and c.get("parallax"):
         moving = motion.parallax_frames(asset, frames, index, (c["width"], c["height"]))
         if moving is not None:
             return motion.encode_frames(moving, out, seconds, c["fps"], _grade(), (c["width"], c["height"]), enc, overlays)
@@ -448,7 +448,7 @@ def usable_alternates(beat_manifest: dict | None, chosen: dict) -> list[dict]:
     return [chosen] + others
 
 
-def shots(script: dict, timings: dict, picks: dict, manifest: dict) -> list[dict]:
+def shots(script: dict, timings: dict, picks: dict, manifest: dict, max_shot: float | None = None) -> list[dict]:
     """Beats -> shots. A beat that stays on screen longer than max_shot_seconds is split, moving
     through its other real pictures (or new camera moves on the same one)."""
     c = cfg()
@@ -459,7 +459,7 @@ def shots(script: dict, timings: dict, picks: dict, manifest: dict) -> list[dict
         beat = seg["beat"]
         pick = picks.get(beat["id"]) or visuals.make_card(beat)
         options = [pick] if pick["source"] == "card" else usable_alternates(by_id.get(beat["id"]), pick)
-        n = 1 if pick["source"] == "card" else max(1, math.ceil(seg["seconds"] / c["max_shot_seconds"] - 0.15))
+        n = 1 if pick["source"] == "card" else max(1, math.ceil(seg["seconds"] / (max_shot or c["max_shot_seconds"]) - 0.15))
         ci = chapter_of[beat["id"]]
         for k in range(n):
             out.append({"beat": beat, "chapter": ci, "pick": options[k % len(options)],
@@ -473,6 +473,9 @@ def run(slug: str, progress=None) -> dict:
     if not shutil.which("ffmpeg"):
         raise RenderError("ffmpeg isn't installed.")
     ep = Episode.load(slug)
+    if (ep.read("meta.json") or {}).get("format") == "story":
+        from . import story_render  # stock footage + narrator layout
+        return story_render.run(slug, progress)
     script, timings = ep.read("script.json"), ep.read("voice/timings.json")
     manifest = ep.read("visuals.json")
     mp3 = voice.load_mp3(ep)
