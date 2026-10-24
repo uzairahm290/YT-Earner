@@ -91,6 +91,12 @@ story:
   caption_words: 9             # words per caption page (two lines)
   grain: 0                     # film grain on top (the documentaries use 5)
 
+# Your own voice with an American accent (pipeline/voiceclone.py): Kokoro reads, OpenVoice V2 on
+# Kaggle's GPU swaps the voice for yours. Needs a 30-60 s sample uploaded once in the dashboard.
+voiceclone:
+  base_voice: am_michael     # the American read that gets converted; its accent and pacing stay
+  tau: 0.3                   # OpenVoice's similarity knob: lower = closer to your timbre, higher = smoother
+
 # Narration. Kokoro-82M (Apache 2.0, fine for monetized videos), runs on CPU.
 voice:
   default: am_michael        # warm, measured American male

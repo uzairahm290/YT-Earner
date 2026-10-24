@@ -181,6 +181,10 @@ def master_to_mp3(track: np.ndarray) -> bytes:
 # ──────────────────────────── run ────────────────────────────
 
 def run(slug: str, voice: str | None = None) -> Episode:
+    from . import voiceclone
+    if voice == voiceclone.VOICE_ID:  # your own voice, via Kaggle
+        voiceclone.run(slug)
+        return Episode.load(slug)
     ep = Episode.load(slug)
     script = ep.read("script.json")
     if not script:
