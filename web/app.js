@@ -202,7 +202,7 @@ async function poll() {
 let lastWorkerCheck = 0;
 const workerState = (e) => `${e.voice_state}|${e.render_state}|${e.illustrate_state}|${e.shorts_state}|${e.shorts_made}|${e.youtube_state}|${e.uploaded}`;
 async function watchVoice() {
-  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state, e.youtube_state].some((s) => ["queued", "running", "waiting"].includes(s));
+  const busy = (e) => [e.voice_state, e.render_state, e.illustrate_state, e.shorts_state, e.youtube_state].some((s) => ["queued", "running", "waiting"].includes(s));  // voice can wait on Kaggle too
   if (!state.episodes.some(busy) || Date.now() - lastWorkerCheck < 8000) return;
   lastWorkerCheck = Date.now();
   const before = new Map(state.episodes.map((e) => [e.slug, workerState(e)]));
@@ -466,8 +466,12 @@ function nextStep(ep, running, flags) {
           `${ep.visuals ? "" : `<button class="btn" data-act="find-visuals">Find pictures meanwhile</button>`}
            <button class="btn" data-act="cancel-voice">Cancel</button>`);
       }
+      if (job.state === "waiting" || (job.state === "running" && job.kernel)) {
+        return box(`<strong>Turning the narration into your voice on Kaggle's GPU…</strong> Kaggle says: <b>${esc(job.kaggle_status || "queued")}</b>. Its free queue can take a while; the worker checks back and finishes it. This page updates by itself.`,
+          ep.visuals ? "" : `<button class="btn" data-act="find-visuals">Find pictures meanwhile</button>`);
+      }
       if (job.state === "running") {
-        return box(`<strong>Recording the narration with ${esc(voiceName(job.voice))}…</strong> About 8 minutes for a 14-minute script. This page updates when it's done.`,
+        return box(`<strong>Recording the narration with ${esc(voiceName(job.voice))}…</strong> About 8 minutes for a 14-minute script.${job.voice === state.status.clone_voice ? " Then it goes to Kaggle to become your voice." : ""} This page updates when it's done.`,
           ep.visuals ? "" : `<button class="btn" data-act="find-visuals">Find pictures meanwhile</button>`);
       }
       if (job.state === "error") {
@@ -547,14 +551,22 @@ function musicPick() {
 
 let musicAudio = null;
 
-function voiceName(id) { return (state.status.voices || {})[id] || id || "the default voice"; }
+function voiceName(id) {
+  if (id && id === state.status.clone_voice) return "your voice (American accent)";
+  return (state.status.voices || {})[id] || id || "the default voice";
+}
 
 function voicePick() {
   const cur = state.ep?.meta?.voice?.voice || state.status.voice_default;
+  const mine = state.status.voiceref;
+  const clone = state.status.clone_voice;
   return `<label class="voice-pick"><span class="sr-only">Narrator voice</span>
     <select id="voicePick" aria-label="Narrator voice">
+      ${mine ? `<option value="${clone}" ${cur === clone ? "selected" : ""}>★ Your voice, American accent</option>` : ""}
       ${Object.entries(state.status.voices || {}).map(([k, v]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(v)}</option>`).join("")}
-    </select></label>`;
+      <option value="__setup">${mine ? "＋ Replace your voice sample…" : "＋ Set up your voice…"}</option>
+    </select></label>
+    <input type="file" id="voiceRefFile" accept="audio/*,.m4a,.mp3,.wav" hidden>`;
 }
 
 function renderTab() {
@@ -1779,6 +1791,32 @@ document.addEventListener("change", async (e) => {
     state.ep = await api(`/api/episodes/${encodeURIComponent(state.ep.slug)}/thumbnails/choose`, { method: "POST", body: { id: r.value } });
     $$(".thumb-opt").forEach((l) => l.classList.toggle("on", l.querySelector("input").checked));
   } catch (err) { toast(err.message, true); }
+});
+
+// Your own voice: one 30-60 s sample, then "Your voice, American accent" in the narrator picker.
+document.addEventListener("change", async (e) => {
+  const sel = e.target.closest("#voicePick");
+  if (!sel || sel.value !== "__setup") return;
+  const back = state.ep?.meta?.voice?.voice || state.status.voice_default;
+  sel.value = back;
+  if (!confirm("Record 30-60 seconds of yourself talking naturally, in a quiet room (any text works, the test story is perfect).\n\n" +
+    "Your narration will then be read in an American accent with your voice, using AI. It's marked as AI narration on YouTube.\n\n" +
+    "Only use your own voice, or someone's who agreed. Continue?")) return;
+  const input = $("#voiceRefFile");
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) { toast("That recording is over 20 MB. 30-60 seconds is plenty.", true); return; }
+    const data_url = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+    const typed = /^data:(audio|video)\//.test(data_url) ? data_url : data_url.replace(/^data:[^;]*;/, "data:audio/mp4;");
+    try {
+      state.status.voiceref = await api("/api/voiceref", { method: "POST", body: { data_url: typed, name: "My voice", consent: true } });
+      toast("Voice sample saved. Pick “Your voice, American accent” in the narrator list.");
+      renderEpisode();
+      const pick = $("#voicePick"); if (pick) pick.value = state.status.clone_voice;
+    } catch (err) { toast(err.message, true); }
+  };
+  input.click();
 });
 
 // Music: pick per story, or add your own MP3 (with its credit line for the description).

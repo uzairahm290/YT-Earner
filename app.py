@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import audio, illustrate, persona, research, script, shorts, story, thumbnail, topics, visuals, voice, youtube
+from pipeline import audio, illustrate, persona, research, script, shorts, story, thumbnail, topics, visuals, voice, voiceclone, youtube
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -208,6 +208,8 @@ def status():
         "music": audio.library(),
         "music_default": audio.cfg()["default"],
         "persona": persona.info(),
+        "voiceref": voiceclone.reference_info(),
+        "clone_voice": voiceclone.VOICE_ID,
         "story_minutes": story.cfg()["minutes"],
     }
 
@@ -265,7 +267,7 @@ _last_collect_wake = [0.0]
 def _wake_for_waiting(metas: list[dict]) -> None:
     """Kaggle notebooks still drawing get collected by the worker. GitHub's schedule is unreliable,
     so while the dashboard is open, wake the worker every 10 minutes until they're in."""
-    if INLINE_WORKER or not any((m.get("illustrate") or {}).get("state") == "waiting" for m in metas):
+    if INLINE_WORKER or not any((m.get(k) or {}).get("state") == "waiting" for m in metas for k in ("illustrate", "voice")):
         return
     if time.time() - _last_collect_wake[0] > 600:
         _last_collect_wake[0] = time.time()
@@ -381,6 +383,33 @@ class PersonaUpload(BaseModel):
     data_url: str
     name: str = "Narrator"
     ai_generated: bool = False
+
+
+class VoiceRef(BaseModel):
+    data_url: str
+    name: str = "My voice"
+    consent: bool = False
+
+
+@app.post("/api/voiceref")
+def voiceref_upload(body: VoiceRef):
+    """A 30-60 s sample of your own voice, used to make narration sound like you."""
+    import base64 as b64
+    if not body.consent:
+        raise HTTPException(422, "Confirm this is your own voice (or you have the speaker's permission).")
+    m = re.match(r"data:(audio/[a-z0-9.+-]+|video/mp4);base64,(.+)", body.data_url or "", re.S)
+    if not m:
+        raise HTTPException(422, "Upload an audio file (M4A, MP3 or WAV).")
+    try:
+        return voiceclone.save_reference(b64.b64decode(m.group(2)), m.group(1), body.name)
+    except voiceclone.CloneError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/api/voiceref")
+def voiceref_remove():
+    voiceclone.remove_reference()
+    return {}
 
 
 @app.get("/api/persona")
@@ -1082,7 +1111,9 @@ def render_captions(slug: str):
 
 def _queue_voice(ep: Episode, voice_id: str | None) -> None:
     voice_id = voice_id or load_config()["voice"]["default"]
-    if voice_id not in voice.voice_choices():
+    if voice_id == voiceclone.VOICE_ID and not voiceclone.reference_info():
+        raise HTTPException(409, "Upload a sample of your voice first.")
+    if voice_id != voiceclone.VOICE_ID and voice_id not in voice.voice_choices():
         raise HTTPException(422, f"Unknown voice '{voice_id}'.")
     meta = ep.read("meta.json")
     if (meta.get("voice") or {}).get("state") == "running":

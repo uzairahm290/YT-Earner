@@ -187,3 +187,62 @@ class Api(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnVoice(unittest.TestCase):
+    """Your voice via OpenVoice on Kaggle; Kaggle itself is replaced by a pass-through."""
+    def setUp(self):
+        from pipeline import research, script
+        research.run("Test Clone", offline=True)
+        script.run("test-clone")
+        self.ep = Episode.load("test-clone")
+
+    def tearDown(self):
+        from pipeline import voiceclone
+        shutil.rmtree(EPISODES_DIR / "test-clone", ignore_errors=True)
+        voiceclone.remove_reference()
+
+    def test_chunks_cut_between_beats_and_cover_everything(self):
+        from pipeline import voiceclone
+        beats = [{"start": i * 10.0, "end": i * 10.0 + 9.0} for i in range(12)]  # 120 s
+        sr = 24000
+        ch = voiceclone.chunks(beats, 120 * sr, sr, max_seconds=45)
+        self.assertEqual(ch[0][0], 0)
+        self.assertEqual(ch[-1][1], 120 * sr)
+        self.assertTrue(all(a == prev[1] for prev, (a, _) in zip(ch, ch[1:])))
+        for a, _ in ch[1:]:
+            t = a / sr
+            self.assertTrue(any(b["end"] <= t <= nb["start"] for b, nb in zip(beats, beats[1:])), t)  # in a pause
+
+    def test_needs_a_sample_and_consent(self):
+        os.environ["DESK_PASSWORD"] = "pw"
+        try:
+            import app
+            a = importlib.reload(app)
+            from fastapi.testclient import TestClient
+            c = TestClient(a.app)
+            c.post("/api/login", json={"password": "pw"})
+            self.ep.set_status("approved")
+            self.assertEqual(c.post(f"/api/episodes/test-clone/voice", json={"voice": "clone:me"}).status_code, 409)
+            import base64
+            url = "data:audio/mp4;base64," + base64.b64encode(b"\0" * 40000).decode()
+            self.assertEqual(c.post("/api/voiceref", json={"data_url": url, "consent": False}).status_code, 422)
+            self.assertEqual(c.post("/api/voiceref", json={"data_url": url, "consent": True}).status_code, 200)
+        finally:
+            del os.environ["DESK_PASSWORD"]
+
+    def test_narration_in_your_voice_keeps_the_timings_and_is_marked_ai(self):
+        from pipeline import voiceclone
+        with mock.patch.dict(os.environ, {"DOCU_MOCK_VOICECLONE": "1"}):
+            voice.run("test-clone", voiceclone.VOICE_ID)
+        t = self.ep.read("voice/timings.json")
+        self.assertEqual(t["voice"], voiceclone.VOICE_ID)
+        self.assertEqual(t["script_hash"], voice.script_hash(self.ep.read("script.json")))
+        self.assertEqual(self.ep.read("meta.json")["status"], "voiced")
+        self.assertTrue(voice.load_mp3(self.ep))
+        meta = self.ep.read("meta.json")
+        meta["render"] = {"state": "done"}
+        self.ep.write("meta.json", meta)
+        pack = youtube.package(self.ep)["long"]
+        self.assertTrue(pack["synthetic"])
+        self.assertIn("creator's own voice", pack["description"])

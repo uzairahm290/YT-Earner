@@ -174,6 +174,12 @@ def _tags(tags: list[str], extra: list[str] = ()) -> list[str]:
     return out
 
 
+def _cloned_voice(meta: dict) -> bool:
+    """A realistic voice clone (even of yourself) is the kind of AI content YouTube wants declared."""
+    from . import voiceclone
+    return ((meta.get("voice") or {}).get("voice") == voiceclone.VOICE_ID)
+
+
 def _persona_synthetic(meta: dict) -> bool:
     """Story videos show the narrator photo: if it's AI-generated, YouTube needs the AI box ticked."""
     if meta.get("format") != "story":
@@ -208,6 +214,8 @@ def package(ep: Episode) -> dict:
     notes = ["Narrated with a synthetic voice (Kokoro)."]
     if _persona_synthetic(meta):
         notes.append("The narrator's picture is AI-generated.")
+    if _cloned_voice(meta):
+        notes[0] = "Narrated with an AI voice made from the creator's own voice."
     if photo_used:
         notes.append("Some general scenes (places and objects, never people or real events) are AI-generated images; "
                      "every picture of a real person, product or event is real.")
@@ -218,7 +226,7 @@ def package(ep: Episode) -> dict:
             "tags": _tags(script.get("tags", [])), "category": SCIENCE_AND_TECH,
             "file": f"{ep.slug}.mp4", "ready": (meta.get("render") or {}).get("state") == "done",
             # YouTube's "altered or synthetic content" box: required for realistic AI images.
-            "synthetic": photo_used or _persona_synthetic(meta)}
+            "synthetic": photo_used or _persona_synthetic(meta) or _cloned_voice(meta)}
 
     out_shorts = {}
     data = shorts.load(ep) or {"items": []}
