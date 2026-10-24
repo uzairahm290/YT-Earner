@@ -118,12 +118,14 @@ def build_user_prompt(topic: str, factsheet: dict, angle: str | None, notes: str
 _NUMBER = re.compile(r"\b(?:1[89]\d{2}|20\d{2})\b|\b\d+(?:[.,]\d+)?\s*(?:%|percent|million|billion|trillion)\b", re.I)
 
 
-def lint(script: Script, factsheet: dict) -> dict:
+def lint(script: Script, factsheet: dict | None, minutes: int | None = None, wpm: int | None = None) -> dict:
+    """factsheet=None (stories): no fact sheet to trace numbers back to, so that check is skipped."""
     cfg = load_config()
     s = cfg["script"]
-    target = s["long_minutes"] * s["words_per_minute"]
+    wpm = wpm or s["words_per_minute"]
+    target = (minutes or s["long_minutes"]) * wpm
     words = script.word_count()
-    fs_text = json.dumps(factsheet, ensure_ascii=False).lower()
+    fs_text = json.dumps(factsheet, ensure_ascii=False).lower() if factsheet is not None else None
 
     banned_hits, unbacked = [], []
     for ch in script.chapters:
@@ -131,7 +133,7 @@ def lint(script: Script, factsheet: dict) -> dict:
             low = b.narration.lower()
             banned_hits += [(b.id, p) for p in cfg["banned_phrases"] if p in low]
             # Every year/figure in the narration should exist somewhere in the fact sheet.
-            for m in _NUMBER.finditer(b.narration):
+            for m in (_NUMBER.finditer(b.narration) if fs_text is not None else ()):
                 core = re.match(r"[\d.,]+", m.group(0)).group(0).rstrip(".,")
                 if core.lower() not in fs_text:
                     unbacked.append((b.id, m.group(0)))
@@ -148,7 +150,7 @@ def lint(script: Script, factsheet: dict) -> dict:
 
     return {
         "words": words,
-        "est_minutes": round(words / s["words_per_minute"], 1),
+        "est_minutes": round(words / wpm, 1),
         "chapters": len(script.chapters),
         "beats": sum(len(c.beats) for c in script.chapters),
         "shorts": len(script.shorts),
@@ -205,9 +207,13 @@ def save(slug: str, data: dict) -> tuple[Script, dict]:
     ep = Episode.load(slug)
     script = Script.model_validate(data)
     script.assign_ids()
-    factsheet = ep.read("factsheet.json") or {}
-    report = lint(script, factsheet)
-    topic = ep.read("meta.json")["topic"]
+    meta = ep.read("meta.json")
+    if meta.get("format") == "story":
+        story_cfg = load_config()["story"]
+        report = lint(script, None, minutes=meta.get("minutes") or story_cfg["minutes"], wpm=story_cfg["words_per_minute"])
+    else:
+        report = lint(script, ep.read("factsheet.json") or {})
+    topic = meta["topic"]
     ep.write("script.json", script.model_dump())
     ep.write("script.md", render_script(topic, script, report))
     ep.write("lint.json", report)

@@ -1,0 +1,17 @@
+{
+  "title_options": [
+    "Fired For A 'Non-Essential' License, I Watched Their Audit Collapse",
+    "They Called My Certification Optional. The Auditors Didn't.",
+    "My Boss Cut The One Role The Contract Required"
+  ],
+  "thumbnail_text_options": ["NON-ESSENTIAL?", "AUDIT DAY", "ONE SIGNATURE"],
+  "hook": "They scraped my name off the office door before I'd even made it back from the parking lot. Three weeks later, they needed that name on a federal form, and nobody else in the building was allowed to sign it.",
+  "chapters": [
+    {"title": "The Cost Review", "summary": "Ryan, the only licensed compliance engineer at a logistics firm, is cut in a cost review by a new VP who calls his license non-essential."},
+    {"title": "The Handover", "summary": "Ryan hands over everything by the book, documents every open obligation in writing, and gets a signed receipt from HR."},
+    {"title": "Audit Season", "summary": "The annual safety audit arrives; the auditor asks for the licensed engineer of record, and the VP realizes nobody can sign."},
+    {"title": "The Invoice", "summary": "The firm begs Ryan to come back; he returns as an outside consultant at four times the rate, and the VP's decision lands on his own review."}
+  ],
+  "description": "A compliance engineer gets cut to save a line item. The line item turns out to be load-bearing.",
+  "tags": ["workplace stories", "office revenge", "corporate karma", "boss gets fired", "compliance", "audit", "storytime"]
+}

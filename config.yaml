@@ -75,6 +75,22 @@ script:
   max_chapters: 7
   shorts_per_video: 6       # Shorts the script should flag for the cutter
 
+# Story format: long first-person stories over stock footage (pipeline/story.py, story_render.py).
+story:
+  niche: "workplace revenge stories: toxic bosses, unfair firings, coworkers taking credit, and the quiet, legal payback"
+  narrator: Ryan               # the name the stories are told by; shown nowhere unless you add it
+  minutes: 22
+  words_per_minute: 150        # storytelling pace, quicker than the documentaries
+  chapters: 7
+  too_similar: 0.45            # premise overlap with an earlier story that gets flagged
+  voice: am_michael
+  music: builtin:tension
+  speed: 1.0
+  max_shot_seconds: 11         # a new clip at least this often
+  overlay: 0.42                # black over the footage (0 = none, 1 = black)
+  caption_words: 9             # words per caption page (two lines)
+  grain: 0                     # film grain on top (the documentaries use 5)
+
 # Narration. Kokoro-82M (Apache 2.0, fine for monetized videos), runs on CPU.
 voice:
   default: am_michael        # warm, measured American male

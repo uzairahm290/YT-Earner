@@ -1,0 +1,7 @@
+{
+  "premises": [
+    {"title": "Fired For A 'Non-Essential' License, I Watched Their Audit Collapse", "premise": "A licensed compliance engineer is cut as 'non-essential' weeks before the audit that legally requires his signature."},
+    {"title": "My Manager Took Credit For My Patent Filing", "premise": "A manager claims an engineer's invention in a promotion review, not knowing the patent office already has the engineer's dated lab notebook."},
+    {"title": "HR Denied My Overtime, So I Followed The Policy Exactly", "premise": "An IT lead is told to stop logging overtime and follows the written on-call policy to the letter during the company's biggest outage."}
+  ]
+}
