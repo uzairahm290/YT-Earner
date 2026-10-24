@@ -407,6 +407,12 @@ const LAB_STATE = { queued: "Queued", running: "Reading…", waiting: "On Kaggle
 
 // What a take is waiting on, in plain words, so a short take never looks stuck.
 function labStage(t, lab) {
+  if (t.voice === lab.enhance_voice) {
+    if (t.state === "queued") return "Waiting for the worker to start. It installs its tools first, about 2 minutes.";
+    if (t.state === "running") return "Preparing the recording and sending it to Kaggle.";
+    if (t.state === "waiting") return `Cleaning on Kaggle's free GPU${t.kaggle_status ? ` (Kaggle: ${esc(t.kaggle_status)})` : ""}. A few minutes; the page updates by itself.`;
+    return "";
+  }
   const mine = t.voice === lab.clone_voice;
   const cleaning = ["queued", "running", "waiting"].includes(lab.voiceref?.clean?.state);
   if (t.state === "queued") {
@@ -430,10 +436,20 @@ function renderVoice() {
 
   $("#main").innerHTML = `
   <header class="lab-head"><h1>Voice studio</h1>
-    <p class="lede">Turn any text into narration: in your own voice with an American accent, or one of the built-in voices. Download it and use it anywhere.</p></header>
+    <p class="lede">Make a recording of yours sound clean and clear, or turn any text into narration (your voice with an American accent, or a built-in one). Download it and use it anywhere.</p></header>
 
   <section class="lab-card">
-    <h2>Your voice</h2>
+    <h2>Enhance my recording</h2>
+    <p class="hint">Upload something you recorded (phone voice memo, M4A, MP3, WAV, or a video). Background noise, hiss and room boom come out and it's polished to sound like a proper mic at YouTube loudness. It's still your own voice, unchanged. Up to ${lab.enhance_max_mb || 30} MB, about 30 minutes; a 10-minute recording takes about 5 minutes on Kaggle's free GPU.</p>
+    <div class="lab-row">
+      <button class="btn btn-primary" data-act="lab-enhance">Upload a recording</button>
+      <label class="lab-check"><input type="checkbox" id="labMute" ${state.labMute === false ? "" : "checked"}> Mute other people talking in the background</label>
+    </div>
+    <input type="file" id="labEnhanceFile" accept="audio/*,video/*,.m4a,.mp3,.wav,.aac,.ogg,.mp4,.mov" hidden>
+  </section>
+
+  <section class="lab-card">
+    <h2>Your voice for AI narration</h2>
     ${ref ? `<div class="lab-ref">${voiceRefNote() || `<p class="vr-note">Sample saved.</p>`}</div>
       <div class="lab-row"><button class="btn" data-act="lab-ref">Replace sample</button><button class="btn btn-quiet" data-act="lab-ref-del">Remove</button></div>`
     : `<p class="hint">Record 30–60 seconds of yourself talking naturally in a quiet room, then upload it. It's cleaned on Kaggle (background voices and noise out) and used to make every take sound like you.</p>
@@ -464,12 +480,19 @@ function renderVoice() {
     ${lab.takes.length ? `<ol class="lab-takes">${lab.takes.map((t) => `<li class="lab-take ${t.state}">
       <div class="lab-take-top">
         <span class="lab-badge ${t.state}">${LAB_STATE[t.state] || t.state}${t.state === "waiting" && t.kaggle_status ? `: Kaggle ${esc(t.kaggle_status)}` : ""}</span>
-        <span class="lab-meta">${t.voice === lab.clone_voice ? "Your voice" : esc(lab.voices[t.voice] || t.voice)} · ${t.speed}× · ${t.chars.toLocaleString()} chars${t.duration ? ` · ${clock(t.duration)}` : ""}</span>
+        <span class="lab-meta">${t.voice === lab.enhance_voice ? `Enhanced recording${t.duration ? ` · ${clock(t.duration)}` : ""}`
+          : `${t.voice === lab.clone_voice ? "Your voice" : esc(lab.voices[t.voice] || t.voice)} · ${t.speed}× · ${t.chars.toLocaleString()} chars${t.duration ? ` · ${clock(t.duration)}` : ""}`}</span>
         <button class="sd-x" data-act="lab-del" data-id="${t.id}" aria-label="Delete take" title="Delete">×</button>
       </div>
-      <p class="lab-preview">${esc(t.preview)}${t.chars > 160 ? "…" : ""}</p>
+      <p class="lab-preview">${t.voice === lab.enhance_voice ? `<strong>${esc(t.name || "Recording")}</strong>` : `${esc(t.preview)}${t.chars > 160 ? "…" : ""}`}</p>
+      ${t.voice === lab.enhance_voice && t.state === "done" ? `<div class="lab-compare">
+        <label>Before <audio controls preload="none" src="/api/voicelab/${t.id}/original"></audio></label>
+        <label>After <audio controls preload="none" src="/api/voicelab/${t.id}.mp3"></audio></label></div>
+        ${(t.steps || []).length ? `<p class="lab-stage">${esc(t.steps.join(" · "))} · polished and loudness-matched</p>` : ""}` : ""}
       ${labStage(t, lab) ? `<p class="lab-stage">${labStage(t, lab)}</p>` : ""}
-      ${t.state === "done" ? `<div class="lab-row"><audio controls preload="none" src="/api/voicelab/${t.id}.mp3"></audio>
+      ${t.state === "done" && t.voice === lab.enhance_voice ? `<div class="lab-row">
+        <a class="btn btn-quiet" href="/api/voicelab/${t.id}.mp3?download=1">Download MP3</a></div>` : ""}
+      ${t.state === "done" && t.voice !== lab.enhance_voice ? `<div class="lab-row"><audio controls preload="none" src="/api/voicelab/${t.id}.mp3"></audio>
         <a class="btn btn-quiet" href="/api/voicelab/${t.id}.mp3?download=1">Download MP3</a>
         <button class="btn btn-quiet" data-act="lab-reuse" data-id="${t.id}">Edit and redo</button></div>` : ""}
       ${t.state === "error" ? `<p class="v-note v-err">${esc(t.error || "")}</p>` : ""}
@@ -1789,6 +1812,25 @@ document.addEventListener("click", async (e) => {
         input.onchange = async () => {
           try { if (await uploadVoiceSample(input)) { state.lab = await api("/api/voicelab"); state.labDraft.voice = state.lab.clone_voice; renderVoice(); } }
           catch (err) { toast(err.message, true); }
+        };
+        input.click(); break;
+      }
+      case "lab-enhance": {
+        const input = $("#labEnhanceFile");
+        input.onchange = async () => {
+          const file = input.files[0];
+          if (!file) return;
+          const max = (state.lab?.enhance_max_mb || 30) * 1024 * 1024;
+          if (file.size > max) { toast(`That file is over ${state.lab?.enhance_max_mb || 30} MB. Split it into parts.`, true); return; }
+          btn.disabled = true; btn.textContent = "Uploading…";
+          try {
+            const raw = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+            const data_url = /^data:(audio|video)\//.test(raw) ? raw : raw.replace(/^data:[^;]*;/, "data:audio/mp4;");
+            state.labMute = $("#labMute").checked;
+            state.lab = await api("/api/voicelab/enhance", { method: "POST", body: { data_url, name: file.name, mute_others: state.labMute } });
+            toast("Uploaded. It's being cleaned on Kaggle.");
+            renderVoice();
+          } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = "Upload a recording"; }
         };
         input.click(); break;
       }

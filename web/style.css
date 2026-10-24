@@ -776,3 +776,8 @@ a.btn-primary { color: var(--cue-ink); }
 .lab-take audio { height: 34px; max-width: 100%; }
 
 .lab-stage { margin: .35rem 0 0; font-size: .85rem; color: var(--graphite); }
+.lab-check { display: inline-flex; align-items: center; gap: .4rem; font-size: .9rem; color: var(--graphite); }
+.lab-compare { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin: .5rem 0 .25rem; }
+.lab-compare label { display: flex; flex-direction: column; gap: .2rem; font-size: .8rem; font-weight: 600;
+  color: var(--graphite); text-transform: uppercase; letter-spacing: .04em; }
+.lab-compare audio { max-width: 100%; }
