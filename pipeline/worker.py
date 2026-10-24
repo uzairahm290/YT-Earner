@@ -140,6 +140,8 @@ def main(check_only: bool = False) -> int:
     queued["kaggle (collect)"] = illustrate.waiting()  # notebooks still drawing from an earlier run
     queued["voice (collect)"] = voiceclone.waiting()   # narrations still converting on Kaggle
     queued["voice sample cleanup"] = ["your voice"] if voiceclone.clean_pending() else []
+    from . import voicelab
+    queued["voice studio"] = voicelab.pending()
     total = sum(len(v) for v in queued.values())
     if check_only:
         print(f"{total} queued: " + (", ".join(f"{k} {s}" for k, v in queued.items() for s in v) or "nothing"))
@@ -153,6 +155,9 @@ def main(check_only: bool = False) -> int:
     if queued["voice sample cleanup"]:  # first, so narrations queued alongside use the clean sample
         result = voiceclone.clean_reference()
         done, failed = done + (result.get("state") in ("done", "waiting")), failed + (result.get("state") == "error")
+    if queued["voice studio"]:
+        d, f = voicelab.run_pending()
+        done, failed = done + d, failed + f
     if queued["voice (collect)"]:
         d, f = voiceclone.collect_waiting()
         done, failed = done + d, failed + f
