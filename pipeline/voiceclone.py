@@ -299,23 +299,23 @@ def clean_reference() -> dict:
     """Worker: send the voice sample to Kaggle for cleanup (or collect a cleanup still running)."""
     job = clean_info()
     started = time.time()
-    if job.get("state") == "queued":
-        print("[voice sample] cleaning on Kaggle")
-        _set_clean(state="running", started_at=datetime.now(timezone.utc).isoformat(), error=None)
-        with tempfile.TemporaryDirectory() as d:
-            d = Path(d)
-            raw = reference_wav(d, prefer_clean=False, sample_rate=44100, light=True)
-            if os.getenv("DOCU_MOCK_VOICECLONE") == "1":
-                _store_clean(raw.read_bytes(), {"steps": ["(demo: not cleaned)"], "skipped": [], "kept_s": 0})
-                return clean_info()
-            kernel_id = _push_kaggle("docu-voice-clean", {"ref.wav": raw}, CLEAN_KERNEL)
-        _set_clean(kernel=kernel_id, kaggle_status="queued", pushed_at=datetime.now(timezone.utc).isoformat())
-        wait_s = KAGGLE_WAIT
-    else:
-        kernel_id = job["kernel"]
-        wait_s = 15 * 60
-    from .illustrate import wait
     try:
+        if job.get("state") == "queued":
+            print("[voice sample] cleaning on Kaggle")
+            _set_clean(state="running", started_at=datetime.now(timezone.utc).isoformat(), error=None)
+            with tempfile.TemporaryDirectory() as d:
+                d = Path(d)
+                raw = reference_wav(d, prefer_clean=False, sample_rate=44100, light=True)
+                if os.getenv("DOCU_MOCK_VOICECLONE") == "1":
+                    _store_clean(raw.read_bytes(), {"steps": ["(demo: not cleaned)"], "skipped": [], "kept_s": 0})
+                    return clean_info()
+                kernel_id = _push_kaggle("docu-voice-clean", {"ref.wav": raw}, CLEAN_KERNEL)
+            _set_clean(kernel=kernel_id, kaggle_status="queued", pushed_at=datetime.now(timezone.utc).isoformat())
+            wait_s = KAGGLE_WAIT
+        else:
+            kernel_id = job["kernel"]
+            wait_s = 15 * 60
+        from .illustrate import wait
         state, _ = wait(kernel_id, wait_s, on_status=lambda s: _set_clean(kaggle_status=s))
         if state not in ("complete", "error"):
             pushed = datetime.fromisoformat(clean_info().get("pushed_at") or datetime.now(timezone.utc).isoformat())
@@ -337,7 +337,9 @@ def clean_reference() -> dict:
         print(f"  ✓ voice sample cleaned in {time.time() - started:.0f}s")
         return clean_info()
     except Exception as e:
-        return _set_clean(state="error", error=str(e)[:400])
+        import traceback
+        traceback.print_exc()
+        return _set_clean(state="error", error=f"{type(e).__name__}: {e}"[:400])
 
 
 def _store_clean(wav: bytes, report: dict) -> None:
@@ -387,17 +389,27 @@ def _push_kaggle(name: str, files: dict[str, Path], code: str) -> str:
         (d / "dataset-metadata.json").write_text(json.dumps(
             {"title": name.replace("-", " ")[:50], "id": ds_id, "licenses": [{"name": "other"}]}))
         try:
-            api.dataset_create_version(str(d), "new input", quiet=True, convert_to_csv=False,
-                                       delete_old_versions=True)
-        except Exception:
-            api.dataset_create_new(str(d), public=False, quiet=True, convert_to_csv=False)
+            resp = api.dataset_create_version(str(d), "new input", quiet=True, convert_to_csv=False,
+                                              delete_old_versions=True)
+            if getattr(resp, "error", None):
+                raise RuntimeError(resp.error)
+        except Exception as first:
+            print(f"  no earlier upload to update ({first}); creating the dataset")
+            resp = api.dataset_create_new(str(d), public=False, quiet=True, convert_to_csv=False)
+            if getattr(resp, "error", None):
+                raise CloneError(f"Kaggle refused the audio upload: {resp.error}")
     for _ in range(40):  # Kaggle processes uploads before notebooks can read them
-        status = str(api.dataset_status(ds_id)).lower()
+        try:
+            status = str(api.dataset_status(ds_id)).lower()
+        except Exception as e:  # a brand-new dataset can 404 for a moment
+            status = f"pending ({e})"
         if "ready" in status:
             break
         if "error" in status:
             raise CloneError(f"Kaggle couldn't process the audio upload ({status}).")
         time.sleep(15)
+    else:
+        raise CloneError(f"Kaggle didn't finish processing the audio upload in 10 minutes ({status}).")
     kernel_id = f"{user}/{name}"
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
