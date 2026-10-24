@@ -152,11 +152,14 @@ def main(check_only: bool = False) -> int:
     done = failed = 0
     if queued["kaggle (collect)"]:
         done, failed = illustrate.collect_waiting()
-    if queued["voice sample cleanup"]:  # first, so narrations queued alongside use the clean sample
+    if queued["voice studio"]:  # built-in voices first: they take a minute and never wait on Kaggle
+        d, f = voicelab.run_pending("builtin")
+        done, failed = done + d, failed + f
+    if queued["voice sample cleanup"]:  # before anything in your voice, so it uses the clean sample
         result = voiceclone.clean_reference()
         done, failed = done + (result.get("state") in ("done", "waiting")), failed + (result.get("state") == "error")
     if queued["voice studio"]:
-        d, f = voicelab.run_pending()
+        d, f = voicelab.run_pending("clone")
         done, failed = done + d, failed + f
     if queued["voice (collect)"]:
         d, f = voiceclone.collect_waiting()

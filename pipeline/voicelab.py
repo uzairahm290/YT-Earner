@@ -154,7 +154,7 @@ def run_one(take_id: str) -> dict:
     if not take:
         raise LabError("That take was deleted.")
     started = time.time()
-    _update(take_id, state="running", started_at=_now(), error=None)
+    _update(take_id, state="running", started_at=_now(), error=None, stage=None)
     print(f"[voice studio] take {take_id}: {take['chars']} characters, {take['voice']}")
     track, beats = _read(take)
     if take["voice"] != voiceclone.VOICE_ID or os.getenv("DOCU_MOCK_VOICECLONE") == "1":
@@ -185,18 +185,25 @@ def _wait_and_finish(take_id: str, seconds: float, started: float) -> dict:
     return _store(take_id, converted, started)
 
 
-def run_pending() -> tuple[int, int]:
+def run_pending(which: str = "all") -> tuple[int, int]:
     """Worker entry: finish takes waiting on Kaggle, then start queued ones. Only one take in your
-    voice is on Kaggle at a time (they share one notebook)."""
+    voice is on Kaggle at a time (they share one notebook).
+    which: "builtin" (quick, CPU only), "clone" (your voice, via Kaggle) or "all"."""
+    def wanted(t):
+        mine = t["voice"] == voiceclone.VOICE_ID
+        return which == "all" or (which == "clone") == mine
     done = failed = 0
-    for take in [t for t in takes() if t.get("state") == "waiting"]:
+    for take in [t for t in takes() if t.get("state") == "waiting" and wanted(t)]:
         try:
             r = _wait_and_finish(take["id"], 15 * 60, time.time())
             done += r["state"] == "done"
         except Exception as e:
             _update(take["id"], state="error", error=str(e)[:400])
             failed += 1
-    for take in [t for t in takes() if t.get("state") == "queued"]:
+    for take in [t for t in takes() if t.get("state") == "queued" and wanted(t)]:
+        if take["voice"] == voiceclone.VOICE_ID and voiceclone.clean_info().get("state") in ("queued", "running", "waiting"):
+            _update(take["id"], stage="Waiting for your voice sample to finish cleaning")
+            continue  # the cleanup is still on Kaggle; this take uses the clean sample once it's back
         if take["voice"] == voiceclone.VOICE_ID and any(
                 t.get("state") == "waiting" and t["voice"] == voiceclone.VOICE_ID for t in takes()):
             continue  # its turn comes when the one on Kaggle is collected
