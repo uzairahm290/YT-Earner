@@ -348,7 +348,11 @@ def make_segment(index: int, asset: Path, kind: str, seconds: float, overlays: l
     enc = [*_intermediate(), "-frames:v", str(frames)]
 
     if kind == "image" and parallax and c.get("parallax"):
-        moving = motion.parallax_frames(asset, frames, index, (c["width"], c["height"]))
+        try:
+            moving = motion.parallax_frames(asset, frames, index, (c["width"], c["height"]))
+        except ImportError as e:  # no OpenCV/torch here: a plain slow zoom instead
+            print(f"  (parallax off: {e})")
+            moving = None
         if moving is not None:
             return motion.encode_frames(moving, out, seconds, c["fps"], _grade(), (c["width"], c["height"]), enc, overlays)
 
