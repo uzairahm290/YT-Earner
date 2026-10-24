@@ -35,19 +35,34 @@
 
   <dialog id="newDialog" class="dialog">
     <form method="dialog" id="newForm">
-      <h2>New story</h2>
-      <label class="field">
-        <span>What's the story about?</span>
-        <input name="topic" id="newTopic" required placeholder="Nokia, Theranos, the 737 MAX…" autocomplete="off">
-      </label>
-      <label class="field">
-        <span>Extra Wikipedia articles to read <em>(optional, one per line)</em></span>
-        <textarea name="extra" id="newExtra" rows="3" placeholder="Stephen Elop&#10;Symbian"></textarea>
-      </label>
-      <p class="hint">Research pulls the Wikipedia articles and builds a fact sheet you'll check before any script gets written.</p>
+      <h2>New video</h2>
+      <div class="fmt-switch" role="radiogroup" aria-label="Kind of video">
+        <label><input type="radio" name="fmt" value="doc" checked><span><b>Documentary</b>Researched from Wikipedia, real photos</span></label>
+        <label><input type="radio" name="fmt" value="story"><span><b>Story</b>First-person story over stock footage, your narrator on screen</span></label>
+      </div>
+      <div class="fmt-doc">
+        <label class="field">
+          <span>What's the story about?</span>
+          <input name="topic" id="newTopic" placeholder="Nokia, Theranos, the 737 MAX…" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>Extra Wikipedia articles to read <em>(optional, one per line)</em></span>
+          <textarea name="extra" id="newExtra" rows="3" placeholder="Stephen Elop&#10;Symbian"></textarea>
+        </label>
+        <p class="hint">Research pulls the Wikipedia articles and builds a fact sheet you'll check before any script gets written.</p>
+      </div>
+      <div class="fmt-story" hidden>
+        <label class="field">
+          <span>Premise <em>(one or two sentences: the injustice, and what quietly sets up the payback)</em></span>
+          <textarea id="newPremise" rows="3" placeholder="A licensed compliance engineer is cut as 'non-essential' three weeks before the audit that legally needs his signature."></textarea>
+        </label>
+        <div class="premise-ideas"><button type="button" class="btn btn-quiet" id="premiseIdeas">✦ Give me ideas</button><ul id="premiseList"></ul></div>
+        <label class="field field-inline"><span>Length</span><input type="number" id="newMinutes" min="5" max="40" value="22"> <em>minutes</em></label>
+        <p class="hint">Written as a fresh story every time; premises close to an earlier one get flagged, because YouTube demonetizes channels that repeat themselves.</p>
+      </div>
       <div class="dialog-actions">
         <button type="button" class="btn" value="cancel" id="newCancel">Cancel</button>
-        <button type="submit" class="btn btn-primary" value="go">Start research</button>
+        <button type="submit" class="btn btn-primary" value="go" id="newGo">Start research</button>
       </div>
     </form>
   </dialog>

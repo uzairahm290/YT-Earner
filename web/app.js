@@ -289,6 +289,7 @@ async function loadEpisode(slug, keepTab = false) {
 }
 
 function defaultTab(ep) {
+  if (ep.format === "story") return ["voiced", "visuals_ready"].includes(ep.status) ? "visuals" : ep.status === "rendered" ? "video" : "script";
   return ["scripted", "approved"].includes(ep.status) ? "script" : "facts";
 }
 
@@ -383,7 +384,7 @@ function renderEpisode() {
   const running = state.jobs.find((j) => j.slug === ep.slug && j.status === "running");
   const r = rank(ep.status);
 
-  const stages = s.stages.map((st, i) => {
+  const stages = s.stages.filter((st) => !(ep.format === "story" && ["research", "verify"].includes(st.key))).map((st, i) => {
     const sr = rank(st.status);
     // "Verify facts" only counts as done when every flagged fact is ticked, even if the story moved on.
     let done = st.key === "verify" ? ep.verify_done >= ep.verify_total && sr <= r : sr <= r;
@@ -401,11 +402,12 @@ function renderEpisode() {
 
   const flags = state.draft ? beatFlags() : new Map();
   const lintCount = (ep.lint?.issues || []).filter((x) => !x.startsWith("Length")).length;
+  const isStory = ep.format === "story";
   const tabs = [
-    ["facts", "Fact sheet", ep.verify_total ? `${ep.verify_done}/${ep.verify_total}` : ""],
-    ["script", "Script", lintCount ? `${lintCount} to fix` : ""],
+    ...(isStory ? [] : [["facts", "Fact sheet", ep.verify_total ? `${ep.verify_done}/${ep.verify_total}` : ""]]),
+    ["script", isStory ? "Story" : "Script", lintCount ? `${lintCount} to fix` : ""],
     ["shorts", "Shorts", ep.shorts_made ? `${ep.shorts_made} made` : state.draft ? String(state.draft.shorts.length) : ""],
-    ["visuals", "Pictures", ep.visuals ? (ep.visuals.summary.needs_you ? `${ep.visuals.summary.needs_you} need you` : "✓") : ""],
+    ["visuals", isStory ? "Clips" : "Pictures", ep.visuals ? (ep.visuals.summary.needs_you ? `${ep.visuals.summary.needs_you} need you` : "✓") : ""],
     ["package", "Title and thumbnail", ""],
     ...(ep.meta?.render?.state === "done" ? [["video", "Video", "✓"]] : []),
     ...(ep.youtube ? [["youtube", "YouTube", ep.uploaded ? `${ep.uploaded} up` : ""]] : []),
@@ -443,6 +445,8 @@ function nextStep(ep, running, flags) {
       return box(`<strong>Check ${verifyLeft} flagged ${verifyLeft === 1 ? "fact" : "facts"}.</strong> Confirm each one against the sources, then tick it off.`,
         state.tab !== "facts" ? `<button class="btn btn-primary" data-tab="facts">Open the fact sheet</button>` : "");
     case "verified":
+      if (ep.format === "story") return box(`<strong>Write the story.</strong> Check the premise and length, then write it.`,
+        state.tab !== "script" ? `<button class="btn btn-primary" data-tab="script">Write the story</button>` : "");
       return box(`<strong>Facts are checked.</strong> Pick a story angle and write the script.`,
         state.tab !== "script" ? `<button class="btn btn-primary" data-tab="script">Write the script</button>` : "");
     case "scripted": {
@@ -505,7 +509,9 @@ function nextStep(ep, running, flags) {
           `<button class="btn btn-primary" data-act="render">Try again</button>
            <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
       }
-      return box(`<strong>Narration and pictures approved.</strong> Cut them into the finished video: camera moves with depth on the photos, dissolves, chapter titles, lower thirds, music under the voice, captions.`,
+      return box(ep.format === "story"
+        ? `<strong>Narration and clips approved.</strong> Cut the story video: clips under a dark overlay, your narrator on the left, yellow captions timed to the voice, music under it.${state.status.persona ? "" : ` <b>Add the narrator photo on the Clips tab first.</b>`}`
+        : `<strong>Narration and pictures approved.</strong> Cut them into the finished video: camera moves with depth on the photos, dissolves, chapter titles, lower thirds, music under the voice, captions.`,
         `${musicPick()}<button class="btn btn-primary" data-act="render">Render the video</button>
          ${state.tab !== "shorts" ? `<button class="btn" data-tab="shorts">Make Shorts</button>` : ""}
          <button class="btn" data-act="reopen-visuals">Change pictures</button>`);
@@ -731,6 +737,7 @@ function visualsTab() {
   }
 
   const sum = v.summary;
+  const narrator = ep.format === "story" ? narratorCard() : "";
   const timings = new Map((ep.voice?.beats || []).map((b) => [b.id, b]));
   const narration = new Map((ep.script?.chapters || []).flatMap((ch) => ch.beats.map((b) => [b.id, b.narration])));
   const stock = state.status.stock_video || [];
@@ -739,6 +746,7 @@ function visualsTab() {
   const rows = v.beats.filter((b) => !state.onlyNeeds || needsYou(b));
 
   return `
+    ${narrator}
     <div class="v-bar">
       <div class="stats">
         <span class="stat"><b>${sum.real}</b> real pictures</span>
@@ -751,7 +759,7 @@ function visualsTab() {
       <button class="btn" data-act="find-visuals" ${running ? "disabled" : ""}>${running ? "Searching…" : "Search again"}</button>
     </div>
     ${illustrateNote()}
-    ${stock.length ? "" : `<p class="v-note">Stock video is off. Add a free <code>PEXELS_API_KEY</code> on Render to get real footage for the B-roll beats; until then they use Commons photos.</p>`}
+    ${stock.length ? "" : `<p class="v-note">Stock video is off. Add a free <code>PIXABAY_API_KEY</code> on Render (sign up at pixabay.com, the key is on pixabay.com/api/docs) to get real footage${ep.format === "story" ? " for every scene" : " for the B-roll beats"}; until then ${ep.format === "story" ? "scenes" : "they"} use Commons photos.</p>`}
     <ol class="v-list">
       ${rows.map((b) => {
         const c = b.candidates[b.chosen] || b.candidates[0];
@@ -803,6 +811,25 @@ function drawForm(b) {
     <p class="v-hint">No names, brands or years: AI never shows a real person, product or event.</p>
     <div class="v-drawbtns"><button class="btn btn-primary" type="submit">✦ Draw this</button><button class="btn btn-quiet" type="button" data-act="close-draw">Cancel</button></div>
   </form>`;
+}
+
+function narratorCard() {
+  const p = state.status.persona;
+  const v = encodeURIComponent(p?.updated_at || "");
+  return `<section class="narrator">
+    <div class="narrator-pic">${p ? `<img src="/api/persona/cutout.png?v=${v}" alt="Narrator cutout">` : `<span>No narrator yet</span>`}</div>
+    <div class="narrator-body">
+      <h3>Narrator on screen</h3>
+      <p class="hint">${p ? `<b>${esc(p.name)}</b>, ${p.how === "checkerboard removed" ? "fake checkerboard background removed" : "transparent PNG"}. Shown bottom left in every story video, plus a round badge top right.${p.ai_generated ? " Marked as AI-generated on upload, as YouTube requires." : ""}`
+        : "Upload a PNG with a transparent background (remove.bg is free), or an image with a fake checkerboard background, and it's cut out automatically."}</p>
+      <div class="narrator-form">
+        <input type="text" id="personaName" value="${esc(p?.name || "Ryan")}" aria-label="Narrator name" maxlength="40">
+        <label class="narrator-ai"><input type="checkbox" id="personaAI" ${!p || p.ai_generated ? "checked" : ""}> This picture is AI-generated</label>
+        <button class="btn" data-act="persona-upload">${p ? "Replace photo" : "Upload photo"}</button>
+        <input type="file" id="personaFile" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+    </div>
+  </section>`;
 }
 
 function illustrateButton(v) {
@@ -980,7 +1007,7 @@ function scriptTab() {
   const ep = state.ep;
   const running = state.jobs.some((j) => j.slug === ep.slug && j.status === "running");
   if (running && !state.draft) return `<div class="empty"><h2>Writing…</h2><p>The script appears here when it's done.</p></div>`;
-  if (!ep.factsheet) return `<div class="empty"><h2>Research comes first</h2><p>The script is written only from the fact sheet, so that has to exist first.</p></div>`;
+  if (!ep.factsheet && ep.format !== "story") return `<div class="empty"><h2>Research comes first</h2><p>The script is written only from the fact sheet, so that has to exist first.</p></div>`;
   if (!state.draft || state.showGen) return genForm();
 
   const flags = beatFlags();
@@ -992,7 +1019,7 @@ function scriptTab() {
   return `
     ${scriptBar()}
     ${issues.length ? `<ul class="lint-list">${issues.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
-      : `<div class="lint-ok">No AI phrases, and every number traces back to the fact sheet.</div>`}
+      : `<div class="lint-ok">${ep.format === "story" ? "No AI phrases, and the premise isn't a repeat of an earlier story." : "No AI phrases, and every number traces back to the fact sheet."}</div>`}
     ${lengthNote ? `<p class="lint-note">${esc(lengthNote)}. Not a blocker, but aim close to the target.</p>` : ""}
     <div class="paper" id="paper">
       <div class="paper-cols"><div>Time</div><div>Picture</div><div>Narration</div><div></div></div>
@@ -1037,7 +1064,25 @@ function scriptTab() {
     <p style="margin-top:28px"><button class="btn" data-act="show-gen">Rewrite from scratch</button></p>`;
 }
 
+function storyGenForm() {
+  const m = state.ep.meta || {};
+  const hasDraft = !!state.draft;
+  return `<div class="gen-form">
+    <h2 style="margin-bottom:8px">${hasDraft ? "Rewrite the story" : "Write the story"}</h2>
+    <p class="lede" style="margin-bottom:22px">${hasDraft ? "This replaces the current story, including your edits." : "Outline first, then each chapter with the story so far in view, so it holds together over 20 minutes."}</p>
+    <label class="field"><span>Premise</span><textarea id="genPremise" rows="3">${esc(m.premise || state.ep.topic)}</textarea></label>
+    <label class="field field-inline"><span>Length</span><input type="number" id="genMinutes" min="5" max="40" value="${m.minutes || state.status.story_minutes || 22}"> <em>minutes</em></label>
+    <label class="field"><span>Your notes <em>(optional)</em></span>
+      <textarea id="genNotes" rows="3" placeholder="A detail you want in it, the villain's name, how it should end…">${esc(m.notes || "")}</textarea></label>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" data-act="generate">${hasDraft ? "Rewrite story" : "Write story"}</button>
+      ${hasDraft ? `<button class="btn" data-act="hide-gen">Keep current story</button>` : ""}
+    </div>
+  </div>`;
+}
+
 function genForm() {
+  if (state.ep.format === "story") return storyGenForm();
   const fs = state.ep.factsheet;
   const hasDraft = !!state.draft;
   const unverified = (state.ep.verify_total - state.ep.verify_done);
@@ -1431,7 +1476,9 @@ document.addEventListener("click", async (e) => {
 
       case "generate": {
         const notes = $("#genNotes").value.trim() || null;
-        track(await api(`/api/episodes/${slug}/script`, { method: "POST", body: { angle: state.angleChoice, notes } }));
+        const extra = state.ep.format === "story"
+          ? { premise: $("#genPremise").value.trim(), minutes: +$("#genMinutes").value || null } : {};
+        track(await api(`/api/episodes/${slug}/script`, { method: "POST", body: { angle: state.angleChoice, notes, ...extra } }));
         state.showGen = false; state.dirty = false;
         state.draft = null;
         state.ep.meta.angle = state.angleChoice; state.ep.meta.notes = notes;
@@ -1545,6 +1592,20 @@ document.addEventListener("click", async (e) => {
         btn.disabled = true; btn.textContent = "Making…";
         state.ep = await api(`/api/episodes/${slug}/thumbnails`, { method: "POST", body: {} });
         toast("Three thumbnails ready. Pick one."); renderEpisode(); break;
+      }
+      case "persona-upload": {
+        const input = $("#personaFile");
+        input.onchange = async () => {
+          const file = input.files[0];
+          if (!file) return;
+          if (file.size > 15 * 1024 * 1024) { toast("That image is over 15 MB.", true); return; }
+          const data_url = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+          try {
+            state.status.persona = await api("/api/persona", { method: "POST", body: { data_url, name: $("#personaName").value.trim() || "Narrator", ai_generated: $("#personaAI").checked } });
+            toast("Narrator saved"); renderEpisode();
+          } catch (err) { toast(err.message, true); }
+        };
+        input.click(); break;
       }
       case "save-shorts": await saveShorts(); toast("Shorts saved"); renderEpisode(); break;
       case "reset-shorts": {
@@ -1678,8 +1739,12 @@ document.addEventListener("click", async (e) => {
 function openNew(topic = "") {
   $("#newTopic").value = topic;
   $("#newExtra").value = "";
+  $("#newPremise").value = "";
+  delete $("#newPremise").dataset.title;
+  $("#premiseList").innerHTML = "";
+  $("#newMinutes").value = state.status.story_minutes || 22;
   $("#newDialog").showModal();
-  $("#newTopic").focus();
+  syncNewForm();
 }
 
 function markShortsDirty(rerender = false) {
@@ -1773,18 +1838,50 @@ document.addEventListener("submit", async (e) => {
 
 $("#newStoryBtn").addEventListener("click", () => openNew());
 $("#newCancel").addEventListener("click", () => $("#newDialog").close());
+const newFormat = () => $('input[name="fmt"]:checked')?.value || "doc";
+function syncNewForm() {
+  const story = newFormat() === "story";
+  $(".fmt-doc").hidden = story;
+  $(".fmt-story").hidden = !story;
+  $("#newGo").textContent = story ? "Write the story" : "Start research";
+  (story ? $("#newPremise") : $("#newTopic")).focus();
+}
+$$('input[name="fmt"]').forEach((r) => r.addEventListener("change", syncNewForm));
+
+$("#premiseIdeas").addEventListener("click", async () => {
+  const btn = $("#premiseIdeas");
+  btn.disabled = true; btn.textContent = "Thinking…";
+  try {
+    const { premises } = await api("/api/stories/premises", { method: "POST" });
+    $("#premiseList").innerHTML = premises.map((p) => `<li><button type="button" class="premise" data-premise="${esc(p.premise)}" data-title="${esc(p.title)}"><b>${esc(p.title)}</b>${esc(p.premise)}</button></li>`).join("");
+  } catch (err) { toast(err.message, true); }
+  btn.disabled = false; btn.textContent = "✦ More ideas";
+});
+$("#premiseList").addEventListener("click", (e) => {
+  const b = e.target.closest(".premise");
+  if (!b) return;
+  $("#newPremise").value = b.dataset.premise;
+  $("#newPremise").dataset.title = b.dataset.title;
+  $$(".premise").forEach((x) => x.classList.toggle("on", x === b));
+});
+
 $("#newForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const topic = $("#newTopic").value.trim();
-  if (!topic) return;
+  const story = newFormat() === "story";
+  const premise = $("#newPremise").value.trim();
+  const topic = story ? ($("#newPremise").dataset.title || premise.split(/[.!?]/)[0]).slice(0, 80).trim() : $("#newTopic").value.trim();
+  if (!topic || (story && premise.length < 15)) { toast(story ? "Write a premise of a sentence or two first." : "Give the story a topic first.", true); return; }
   try {
-    const res = await api("/api/episodes", { method: "POST", body: { topic, extra: $("#newExtra").value.split("\n") } });
+    const body = story ? { topic, format: "story", premise, minutes: +$("#newMinutes").value || 22 }
+      : { topic, extra: $("#newExtra").value.split("\n") };
+    const res = await api("/api/episodes", { method: "POST", body });
     $("#newDialog").close();
+    if (res.warning) toast(res.warning, true);
     track(res.job);
     state.episodes = await api("/api/episodes");
     await poll();
     state.ep = null;
-    location.hash = `#/e/${res.slug}/facts`;
+    location.hash = `#/e/${res.slug}/${story ? "script" : "facts"}`;
   } catch (err) { toast(err.message, true); }
 });
 

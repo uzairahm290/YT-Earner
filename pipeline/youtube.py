@@ -174,6 +174,14 @@ def _tags(tags: list[str], extra: list[str] = ()) -> list[str]:
     return out
 
 
+def _persona_synthetic(meta: dict) -> bool:
+    """Story videos show the narrator photo: if it's AI-generated, YouTube needs the AI box ticked."""
+    if meta.get("format") != "story":
+        return False
+    from . import persona
+    return bool((persona.info() or {}).get("ai_generated"))
+
+
 def package(ep: Episode) -> dict:
     """Everything YouTube asks for, for the long video and each Short."""
     script = ep.read("script.json") or {}
@@ -198,6 +206,8 @@ def package(ep: Episode) -> dict:
     if music_credit:
         parts.append("Music\n" + music_credit)
     notes = ["Narrated with a synthetic voice (Kokoro)."]
+    if _persona_synthetic(meta):
+        notes.append("The narrator's picture is AI-generated.")
     if photo_used:
         notes.append("Some general scenes (places and objects, never people or real events) are AI-generated images; "
                      "every picture of a real person, product or event is real.")
@@ -208,7 +218,7 @@ def package(ep: Episode) -> dict:
             "tags": _tags(script.get("tags", [])), "category": SCIENCE_AND_TECH,
             "file": f"{ep.slug}.mp4", "ready": (meta.get("render") or {}).get("state") == "done",
             # YouTube's "altered or synthetic content" box: required for realistic AI images.
-            "synthetic": photo_used}
+            "synthetic": photo_used or _persona_synthetic(meta)}
 
     out_shorts = {}
     data = shorts.load(ep) or {"items": []}

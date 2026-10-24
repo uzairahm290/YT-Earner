@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import audio, illustrate, research, script, shorts, thumbnail, topics, visuals, voice, youtube
+from pipeline import audio, illustrate, persona, research, script, shorts, story, thumbnail, topics, visuals, voice, youtube
 from pipeline.config import ROOT, env, load_config
 from pipeline.episode import Episode, slugify
 from pipeline.store import get_store
@@ -207,6 +207,8 @@ def status():
         "youtube": youtube.public_account(),
         "music": audio.library(),
         "music_default": audio.cfg()["default"],
+        "persona": persona.info(),
+        "story_minutes": story.cfg()["minutes"],
     }
 
 
@@ -248,6 +250,7 @@ def summarize(ep: Episode, files: dict | None = None) -> dict:
         "voice_state": (meta.get("voice") or {}).get("state"),
         "render_state": (meta.get("render") or {}).get("state"),
         "illustrate_state": (meta.get("illustrate") or {}).get("state"),
+        "format": meta.get("format", "doc"),
         "shorts_state": (meta.get("shorts") or {}).get("state"),
         "shorts_made": len((meta.get("shorts") or {}).get("made") or {}),
         "youtube_state": (meta.get("youtube") or {}).get("state"),
@@ -322,6 +325,9 @@ def _shorts_view(ep: Episode) -> dict | None:
 class NewEpisode(BaseModel):
     topic: str
     extra: list[str] = []
+    format: str = "doc"          # "doc" (researched documentary) or "story" (narrated fiction)
+    premise: str | None = None
+    minutes: int | None = None
 
 
 @app.post("/api/episodes")
@@ -329,6 +335,8 @@ def create_episode(body: NewEpisode):
     topic = body.topic.strip()
     if not topic:
         raise HTTPException(422, "Give the story a topic first.")
+    if body.format == "story":
+        return _create_story(body)
     slug = slugify(topic)
     Episode.create(topic)  # folder exists right away so the UI can open it
     extra = [e.strip() for e in body.extra if e.strip()]
@@ -341,6 +349,63 @@ def create_episode(body: NewEpisode):
         return {"slug": ep.slug}
     job = start_job("research", f"Researching {topic}", work, slug=slug)
     return {"slug": slug, "job": job}
+
+
+def _create_story(body: NewEpisode) -> dict:
+    premise = (body.premise or body.topic).strip()
+    minutes = max(5, min(40, body.minutes or story.cfg()["minutes"]))
+    score, near = story.closest(premise)
+    ep = Episode.create(body.topic.strip())
+    meta = ep.read("meta.json")
+    meta.update(format="story", premise=premise, minutes=minutes, verify_checked=[],
+                music={"track": story.cfg()["music"]})
+    ep.write("meta.json", meta)
+    ep.set_status("verified")  # no research stage: straight to writing
+    job = start_job("script", f"Writing story: {body.topic.strip()}",
+                    lambda: (story.run(ep.slug, premise=premise, minutes=minutes), {"slug": ep.slug})[1], slug=ep.slug)
+    warning = (f"Close to an earlier story ({score:.0%}): \"{near.get('title')}\"" if near and score >= story.cfg()["too_similar"] else None)
+    return {"slug": ep.slug, "job": job, "warning": warning}
+
+
+@app.post("/api/stories/premises")
+def story_premises():
+    try:
+        return {"premises": story.suggest()}
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't get ideas from the model: {str(e)[:200]}")
+
+
+# ──────────────────────────── narrator (story videos) ────────────────────────────
+
+class PersonaUpload(BaseModel):
+    data_url: str
+    name: str = "Narrator"
+    ai_generated: bool = False
+
+
+@app.get("/api/persona")
+def persona_info():
+    return persona.info() or {}
+
+
+@app.get("/api/persona/cutout.png")
+def persona_image():
+    data = persona.cutout_png()
+    if not data:
+        raise HTTPException(404, "No narrator yet.")
+    return Response(data, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+
+
+@app.post("/api/persona")
+def persona_upload(body: PersonaUpload):
+    import base64 as b64
+    m = re.match(r"data:image/[a-z+]+;base64,(.+)", body.data_url or "", re.S)
+    if not m:
+        raise HTTPException(422, "Upload a PNG or JPG image.")
+    try:
+        return persona.save(b64.b64decode(m.group(1)), body.name, body.ai_generated)
+    except persona.PersonaError as e:
+        raise HTTPException(422, str(e))
 
 
 @app.post("/api/episodes/{slug}/research")
@@ -387,11 +452,20 @@ def set_verify(slug: str, body: VerifyBody):
 class ScriptRequest(BaseModel):
     angle: str | None = None
     notes: str | None = None
+    premise: str | None = None   # stories
+    minutes: int | None = None
 
 
 @app.post("/api/episodes/{slug}/script")
 def generate_script(slug: str, body: ScriptRequest):
     ep = _load(slug)
+    meta = ep.read("meta.json")
+    if meta.get("format") == "story":
+        premise = (body.premise or meta.get("premise") or meta["topic"]).strip()
+        minutes = max(5, min(40, body.minutes or meta.get("minutes") or story.cfg()["minutes"]))
+        return start_job("script", f"Writing story: {meta['topic']}",
+                         lambda: (story.run(slug, premise=premise, minutes=minutes, notes=body.notes), {"slug": slug})[1],
+                         slug=slug)
     if not ep.read("factsheet.json"):
         raise HTTPException(409, "Research this story before writing the script.")
     meta = ep.read("meta.json")
